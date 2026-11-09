@@ -16,6 +16,7 @@ from typing import Any
 from glab_cli_extras.events import Event, utc_now_iso
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.paths import project_dir, sanitize_part
+from glab_cli_extras.store.atomic import atomic_write_json
 
 
 def resource_dir_name(ref: ResourceRef) -> str:
@@ -81,6 +82,4 @@ class Changelog:
             "snapshot": snapshot,
             "written_at": utc_now_iso(),
         }
-        tmp = self.state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, self.state_path)
+        atomic_write_json(self.state_path, payload)

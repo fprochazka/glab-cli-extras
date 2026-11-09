@@ -7,13 +7,13 @@ A log already in the shared cache is reused, so two sessions watching the same p
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 from glab_cli_extras.gitlab.client import GitLabClient, encode_project
 from glab_cli_extras.paths import project_dir, sanitize_part
+from glab_cli_extras.store.atomic import atomic_write_bytes
 
 LogsMode = Literal["failed", "all", "none"]
 LOGS_MODES: tuple[LogsMode, ...] = ("failed", "all", "none")
@@ -87,9 +87,6 @@ async def fetch_job_log(
         params = {"byte_offset": size - TAIL_BYTES, "byte_limit": TAIL_BYTES}
         truncated = True
     response = await client.get(f"projects/{encoded}/jobs/{job_id}/trace", params, kind="trace")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
     header = f"[glab-watch: last {TAIL_BYTES} of {size} bytes]\n".encode() if truncated else b""
-    tmp.write_bytes(header + response.body)
-    os.replace(tmp, path)
+    atomic_write_bytes(path, header + response.body)
     return FetchedLog(path, truncated, size, False)

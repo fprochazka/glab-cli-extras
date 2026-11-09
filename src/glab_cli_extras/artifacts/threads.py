@@ -9,12 +9,12 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from glab_cli_extras.paths import sanitize_part
+from glab_cli_extras.store.atomic import atomic_write_text
 
 META_FILE = ".meta.json"
 
@@ -108,10 +108,7 @@ class ThreadStore:
         return {str(k): v for k, v in raw.items() if isinstance(v, dict)}
 
     def _save_meta(self) -> None:
-        self.directory.mkdir(parents=True, exist_ok=True)
-        tmp = self._meta_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(tmp, self._meta_path)
+        atomic_write_text(self._meta_path, json.dumps(self._meta, indent=2, sort_keys=True) + "\n")
 
     def path_for(self, discussion_id: str) -> Path | None:
         entry = self._meta.get(discussion_id)
@@ -127,10 +124,7 @@ class ThreadStore:
         old = self._meta.get(discussion_id)
         if old and old.get("hash") == digest and old.get("filename") == filename and path.is_file():
             return path, False
-        self.directory.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(content, encoding="utf-8")
-        os.replace(tmp, path)
+        atomic_write_text(path, content)
         if old and old.get("filename") and old["filename"] != filename:
             with contextlib.suppress(OSError):
                 (self.directory / old["filename"]).unlink()
