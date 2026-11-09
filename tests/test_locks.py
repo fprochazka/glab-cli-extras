@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from glab_cli_extras.daemon.locks import FileLock, LockTimeout
+from glab_cli_extras.store.locks import FileLock, LockTimeout
 
 HOLDER = """
 import sys, time
 from pathlib import Path
-from glab_cli_extras.daemon.locks import FileLock
+from glab_cli_extras.store.locks import FileLock
 lock = FileLock(Path(sys.argv[1]))
 assert lock.try_acquire()
 print("held", flush=True)

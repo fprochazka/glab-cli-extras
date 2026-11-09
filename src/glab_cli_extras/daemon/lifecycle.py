@@ -25,10 +25,10 @@ from typing import Any
 
 from glab_cli_extras import __version__
 from glab_cli_extras.daemon.engine import DEFAULT_CLIENT_POLL_MS, DEFAULT_LEASE_TIMEOUT, Engine
-from glab_cli_extras.daemon.locks import FileLock
 from glab_cli_extras.daemon.server import handle
 from glab_cli_extras.daemon.transport import DaemonFiles, DaemonUnavailable, request, start_server, use_tcp
 from glab_cli_extras.paths import ensure_private_dir, user_cache_dir
+from glab_cli_extras.store.locks import FileLock
 
 log = logging.getLogger("glab_cli_extras.daemon")
 
