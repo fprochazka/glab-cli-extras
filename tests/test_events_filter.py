@@ -11,8 +11,16 @@ from glab_cli_extras.events import (
 )
 
 
-def test_default_is_everything_the_resource_tracks() -> None:
-    assert resolve_filter("mr", None, None) == frozenset(KINDS_BY_RESOURCE["mr"]) | frozenset(LIFECYCLE_KINDS)
+def test_default_is_everything_the_resource_tracks_but_the_threshold_kinds() -> None:
+    expected = frozenset(KINDS_BY_RESOURCE["mr"]) - {"quiet", "pipeline_stuck"} | frozenset(LIFECYCLE_KINDS)
+    assert resolve_filter("mr", None, None) == expected
+
+
+def test_a_threshold_option_adds_its_kind_to_the_default_and_to_its_group() -> None:
+    assert "quiet" in resolve_filter("mr", None, None, ["quiet"])
+    assert "pipeline_stuck" in resolve_filter("pipeline", ["pipeline"], None, ["pipeline_stuck"])
+    assert "quiet" not in resolve_filter("mr", ["status"], None)
+    assert "quiet" in resolve_filter("mr", ["status"], None, ["quiet"])
 
 
 def test_groups_expand_to_kinds_the_resource_produces() -> None:
@@ -42,6 +50,8 @@ def test_repeated_and_comma_separated_values_combine() -> None:
         ("pipeline", ["mr_opened"], None, "never produces 'mr_opened'"),
         ("mr", None, ["lifecycle"], "cannot be excluded"),
         ("branch", None, ["watch_started"], "cannot be excluded"),
+        ("mr", ["quiet"], None, "only with --quiet-after"),
+        ("pipeline", ["quiet"], None, "never produces 'quiet'"),
     ],
 )
 def test_mistakes_fail_at_startup(

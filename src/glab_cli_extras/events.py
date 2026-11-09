@@ -42,9 +42,15 @@ MR_PIPELINE_KINDS: tuple[str, ...] = ("pipeline_status_changed", "pipeline_finis
 """What an MR watch reports about its head pipeline, besides `head_pipeline_changed`. Job-level detail needs a
 pipeline watch, whose command every one of these events carries."""
 
+QUIET = "quiet"
+PIPELINE_STUCK = "pipeline_stuck"
+THRESHOLD_OPTIONS: Mapping[str, str] = {QUIET: "--quiet-after", PIPELINE_STUCK: "--stuck-after"}
+"""The kinds the watch client computes from what it already receives, and the option that switches each one on.
+They are never sent to the daemon, and a watch reports one only when its option is given."""
+
 KINDS_BY_RESOURCE: Mapping[str, tuple[str, ...]] = {
-    "pipeline": PIPELINE_KINDS,
-    "mr": MR_OWN_KINDS + MR_PIPELINE_KINDS,
+    "pipeline": (*PIPELINE_KINDS, PIPELINE_STUCK),
+    "mr": (*MR_OWN_KINDS, *MR_PIPELINE_KINDS, QUIET, PIPELINE_STUCK),
     "mrs": MRS_KINDS,
     "branch": BRANCH_KINDS,
 }
@@ -58,6 +64,7 @@ GROUPS: Mapping[str, tuple[str, ...]] = {
         "reviewers_changed",
         "title_changed",
         "description_changed",
+        QUIET,
         *MRS_KINDS,
     ),
     "comments": ("thread_created", "thread_updated", "thread_resolved", "thread_unresolved"),
@@ -68,6 +75,7 @@ GROUPS: Mapping[str, tuple[str, ...]] = {
         "pipeline_status_changed",
         "pipeline_created",
         "pipeline_finished",
+        PIPELINE_STUCK,
     ),
     "lifecycle": LIFECYCLE_KINDS,
 }
@@ -81,21 +89,26 @@ class FilterError(ValueError):
     pass
 
 
-def _expand(resource_kind: str, values: Iterable[str], option: str) -> set[str]:
+def _expand(resource_kind: str, values: Iterable[str], option: str, enabled: frozenset[str]) -> set[str]:
     produced = set(KINDS_BY_RESOURCE[resource_kind]) | set(LIFECYCLE_KINDS)
+    switched_off = set(THRESHOLD_OPTIONS) - enabled
     expanded: set[str] = set()
     for raw in values:
         name = raw.strip()
         if not name:
             continue
         if name in GROUPS:
-            members = set(GROUPS[name]) & produced
+            # A group brings a threshold kind only when its option is given: `--events=status` stays usable
+            # without `--quiet-after`.
+            members = set(GROUPS[name]) & produced - switched_off
             if not members:
                 raise FilterError(f"{option}: the group {name!r} has no events for a {resource_kind} watch")
             expanded |= members
         elif name in ALL_KINDS:
             if name not in produced:
                 raise FilterError(f"{option}: a {resource_kind} watch never produces {name!r}")
+            if name in switched_off and option == "--events":
+                raise FilterError(f"{option}: {name!r} is reported only with {THRESHOLD_OPTIONS[name]}")
             expanded.add(name)
         else:
             known = ", ".join(sorted(GROUPS))
@@ -108,19 +121,34 @@ def split_values(values: Iterable[str] | None) -> list[str]:
     return [part for value in values or () for part in value.split(",") if part.strip()]
 
 
-def resolve_filter(resource_kind: str, include: Iterable[str] | None, exclude: Iterable[str] | None) -> frozenset[str]:
-    """Return the event kinds a watch reports. Lifecycle events are always in, and cannot be excluded."""
+def resolve_filter(
+    resource_kind: str,
+    include: Iterable[str] | None,
+    exclude: Iterable[str] | None,
+    enabled: Iterable[str] = (),
+) -> frozenset[str]:
+    """Return the event kinds a watch reports. Lifecycle events are always in, and cannot be excluded.
+
+    `enabled` names the threshold kinds whose option was given. Without its option a threshold kind is never
+    reported, and with it the kind must survive the filter, so an option never silently does nothing.
+    """
+    enabled_set = frozenset(enabled)
     include_list = split_values(include)
     exclude_list = split_values(exclude)
     if include_list:
-        selected = _expand(resource_kind, include_list, "--events")
+        selected = _expand(resource_kind, include_list, "--events", enabled_set)
     else:
-        selected = set(KINDS_BY_RESOURCE[resource_kind])
+        selected = set(KINDS_BY_RESOURCE[resource_kind]) - (set(THRESHOLD_OPTIONS) - enabled_set)
     if exclude_list:
-        excluded = _expand(resource_kind, exclude_list, "--exclude-events")
+        excluded = _expand(resource_kind, exclude_list, "--exclude-events", enabled_set)
         if excluded & set(LIFECYCLE_KINDS):
             raise FilterError("--exclude-events: lifecycle events are always reported and cannot be excluded")
         selected -= excluded
+    for kind in sorted(enabled_set):
+        if kind not in KINDS_BY_RESOURCE[resource_kind]:
+            raise FilterError(f"{THRESHOLD_OPTIONS[kind]}: a {resource_kind} watch never produces {kind!r}")
+        if kind not in selected:
+            raise FilterError(f"{THRESHOLD_OPTIONS[kind]}: {kind!r} is filtered out by --events/--exclude-events")
     return frozenset(selected | set(LIFECYCLE_KINDS))
 
 

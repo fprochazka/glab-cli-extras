@@ -103,6 +103,7 @@ def gql_mr(
     reviewers: list[str] | None = None,
     pipeline_id: int | None = 5001,
     pipeline_status: str = "RUNNING",
+    pipeline_sha: str | None = None,
     failed_jobs: list[str] | None = None,
     threads: list[dict[str, Any]] | None = None,
     has_next_page: bool = False,
@@ -126,6 +127,7 @@ def gql_mr(
             {
                 "id": f"gid://gitlab/Ci::Pipeline/{pipeline_id}",
                 "status": pipeline_status,
+                "sha": pipeline_sha or head_sha,
                 "path": f"/{PROJECT}/-/pipelines/{pipeline_id}",
                 "project": {"fullPath": PROJECT},
                 "jobs": {"nodes": [{"name": n, "allowFailure": False} for n in failed_jobs or []]},

@@ -30,6 +30,13 @@ MR_URL = "https://gitlab.example.com/group/project/-/merge_requests/42"
         (["mr", MR_URL, "--message-priority=urgent"], "--message-priority must be one of"),
         (["mr", MR_URL, "--timeout=soon"], "cannot read the duration"),
         (["branch", "a", "b", "c"], "expected [REPO] BRANCH"),
+        (["mr", MR_URL, "--events=quiet"], "'quiet' is reported only with --quiet-after"),
+        (["mr", MR_URL, "--events=pipeline_stuck"], "'pipeline_stuck' is reported only with --stuck-after"),
+        (["mr", MR_URL, "--quiet-after=2m", "--exclude-events=status"], "'quiet' is filtered out"),
+        (["mr", MR_URL, "--stuck-after=30m", "--events=status"], "'pipeline_stuck' is filtered out"),
+        (["mr", MR_URL, "--quiet-after=soon"], "--quiet-after: cannot read the duration"),
+        (["mr", MR_URL, "--quiet-after=0s"], "longer than zero"),
+        (["pipeline", PIPELINE_URL, "--stuck-after=0"], "longer than zero"),
     ],
 )
 def test_bad_options_fail_before_anything_starts(args: list[str], message: str) -> None:

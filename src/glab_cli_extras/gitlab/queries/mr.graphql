@@ -24,6 +24,7 @@ query MergeRequestSnapshot(
       headPipeline @include(if: $withPipeline) {
         id
         status
+        sha
         path
         project { fullPath }
         jobs(statuses: [FAILED], retried: false) { nodes { name allowFailure } }

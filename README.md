@@ -80,6 +80,13 @@ All four resource commands take:
 
 `pipeline` also takes `--logs=failed|all|none`: which finished jobs get their log downloaded. The default is `failed`. `mr` does not take `--logs`; follow the `watch_command` of a pipeline event for the jobs.
 
+Two thresholds report what did not happen. The watcher computes them from what it already receives, so they cost no request:
+
+- `--quiet-after=<duration>` on `mr`, repeatable: a `quiet` event when the head pipeline succeeded on the current head and nothing else was reported for that long. It comes once per head SHA and threshold. A push, a new green pipeline and every other reported event start the count again. `--quiet-after=2m --quiet-after=15m` says "green and quiet for 2 minutes", then again for 15.
+- `--stuck-after=<duration>` on `mr` and `pipeline`: a `pipeline_stuck` event when the pipeline is still `running` or `pending` that long after the watcher first saw it in one of those statuses. It comes once per pipeline id.
+
+Without its option, neither event is reported, and asking for it with `--events` is an error. With its option, the event must pass the filter: `--quiet-after` with `--exclude-events=status` is an error too.
+
 ### Startup header
 
 On start, every watcher prints a header. Each line starts with `glab-watch: `:
@@ -96,7 +103,7 @@ glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-v3.
 glab-watch: restart with: glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123 --events=<kinds|groups> --exclude-events=<kinds|groups> (groups: status, comments, push, pipeline)
 ```
 
-The `state:` line appears for `mr` and `pipeline` only. A `pipeline` watch adds a `logs:` line, a watch with `--until` or `--timeout` adds an `ends:` line, and a `stream fallback:` line says why `auto` did not message the session.
+The `state:` line appears for `mr` and `pipeline` only. A watch with `--quiet-after` or `--stuck-after` adds a `thresholds:` line, a `pipeline` watch adds a `logs:` line, a watch with `--until` or `--timeout` adds an `ends:` line, and a `stream fallback:` line says why `auto` did not message the session.
 
 The header and the other status lines (`ended: …`, errors) always go to stderr, so stdout carries only events. Claude Code puts a background task's stderr into the task output next to its stdout, so an agent sees both. A status line never starts with `{`: in merged output, every line that starts with `{` is an event.
 
@@ -124,10 +131,11 @@ Lifecycle events come with every resource and cannot be filtered out:
 - `approvals_changed`, `reviewers_changed`
 - `head_pipeline_changed`, `pipeline_status_changed` (`from`, `to`) and `pipeline_finished` (with `failed_jobs` when it failed) for the head pipeline. These are pipeline-level only: an MR watch reports no job events and downloads no logs. Each one has the pipeline's `web_url` and `watch_command`, the `glab-watch pipeline <url>` command that watches it job by job. The head pipeline's status comes with the MR's own snapshot query, so it costs no extra request.
 - `thread_created`, `thread_updated`, `thread_resolved`, `thread_unresolved`, each with the thread's file in `artifacts`. GitLab can show a thread unresolved for a poll or two after a force-push; a `thread_unresolved` within two polls of a `pushed` has `after_push: true`.
+- `quiet` (`after`, `head_sha`, `pipeline_id`) with `--quiet-after`, and `pipeline_stuck` (`after`, `pipeline_id`, `status`, `web_url`, `watch_command`) with `--stuck-after`.
 
 One `glab-discussion drafts publish` changes the MR in up to three ways at once: a review state, `reviewers_changed` when it added you as a reviewer, and `approvals_changed` when it revoked your approval. A watcher of your own MR sees these as events like any other.
 
-`pipeline`: `status_changed`, `job_started`, `job_finished` (with the log in `artifacts` when `--logs` asks for it), `downstream_created`, `finished` (with `summary.txt` in `artifacts`, and the pipeline's dir in `data.dir`). When the pipeline finishes, the watcher writes the dump `glab-pipeline inspect` writes, and the final `watch_ended` also carries `summary.txt` in `artifacts`. A later `glab-pipeline inspect` of the same pipeline in the same session finds the files current and makes one request, the ETag probe.
+`pipeline`: `status_changed`, `job_started`, `job_finished` (with the log in `artifacts` when `--logs` asks for it), `downstream_created`, `finished` (with `summary.txt` in `artifacts`, and the pipeline's dir in `data.dir`), and `pipeline_stuck` (`after`, `pipeline_id`, `status`, `web_url`, `running_jobs`) with `--stuck-after`. When the pipeline finishes, the watcher writes the dump `glab-pipeline inspect` writes, and the final `watch_ended` also carries `summary.txt` in `artifacts`. A later `glab-pipeline inspect` of the same pipeline in the same session finds the files current and makes one request, the ETag probe.
 
 `mrs`: `mr_opened`, `mr_updated`, `mr_merged`, `mr_closed`, `mr_reopened`. When the list shows what moved, the event has `changes: {field: [old, new]}` for `title`, `draft`, `target_branch`, `sha`, `detailed_merge_status`, `labels`, `assignees` and `reviewers`, for example `{"draft": [true, false]}` when a draft becomes ready. These come from the same list request, so they cost nothing extra.
 
@@ -135,10 +143,12 @@ One `glab-discussion drafts publish` changes the MR in up to three ways at once:
 
 `--events` and `--exclude-events` take kinds and these groups:
 
-- `status`: `state_changed`, `draft_changed`, `merge_status_changed`, `approvals_changed`, `reviewers_changed`, `title_changed`, `description_changed`, and all `mr_*`.
+- `status`: `state_changed`, `draft_changed`, `merge_status_changed`, `approvals_changed`, `reviewers_changed`, `title_changed`, `description_changed`, `quiet`, and all `mr_*`.
 - `comments`: `thread_*`.
 - `push`: `pushed`, `force_pushed`, `created`, `deleted`.
-- `pipeline`: `head_pipeline_changed`, `pipeline_status_changed`, `status_changed`, `job_*`, `downstream_created`, `finished`, `pipeline_created`, `pipeline_finished`.
+- `pipeline`: `head_pipeline_changed`, `pipeline_status_changed`, `status_changed`, `job_*`, `downstream_created`, `finished`, `pipeline_created`, `pipeline_finished`, `pipeline_stuck`.
+
+A group brings `quiet` and `pipeline_stuck` only when their option is given.
 - `lifecycle`: `watch_started`, `watch_degraded`, `watch_ended`; always on.
 
 The filter is checked at start. An unknown kind or group, or one the resource never produces, is an error, so a typo does not silently mean "no events". The filter also saves API work: an MR watch without `comments` never fetches threads, and one without `pipeline` leaves the head pipeline out of its query.

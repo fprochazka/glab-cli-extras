@@ -23,11 +23,19 @@ from glab_cli_extras.daemon.engine import Engine
 from glab_cli_extras.daemon.lifecycle import ensure_daemon
 from glab_cli_extras.daemon.server import decode_log
 from glab_cli_extras.daemon.transport import DaemonFiles, DaemonMismatch, DaemonUnavailable, request
-from glab_cli_extras.events import WATCH_ENDED, WATCH_STARTED, Event, utc_now_iso
+from glab_cli_extras.events import (
+    MR_PIPELINE_KINDS,
+    THRESHOLD_OPTIONS,
+    WATCH_ENDED,
+    WATCH_STARTED,
+    Event,
+    utc_now_iso,
+)
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.sync.job_logs import LogContent, LogsMode
 from glab_cli_extras.watch.changelog import Changelog
 from glab_cli_extras.watch.sinks import Sink, StatusOutput
+from glab_cli_extras.watch.timers import Thresholds, WatchTimers
 from glab_cli_extras.watch.writer import ResourceWriter
 
 T = TypeVar("T")
@@ -224,6 +232,16 @@ class WatchSettings:
     logs: LogsMode = "failed"
     until: str | None = None
     timeout: float | None = None
+    thresholds: Thresholds = Thresholds()
+
+    @property
+    def subscribed_events(self) -> frozenset[str]:
+        """What the daemon is asked for: the reported kinds without the client's own threshold kinds, plus the
+        head pipeline for an MR watch whose thresholds read it, so the snapshot carries its status."""
+        kinds = self.events - frozenset(THRESHOLD_OPTIONS)
+        if self.ref.kind == "mr" and self.events & frozenset(THRESHOLD_OPTIONS):
+            kinds |= frozenset({"head_pipeline_changed", *MR_PIPELINE_KINDS})
+        return kinds
 
 
 class Watcher:
@@ -276,7 +294,9 @@ class Watcher:
             stored = self.changelog.load_baseline()
             baseline = stored.snapshot if stored else None
         s = self.settings
-        self._subscription, self._cursor = self.backend.subscribe(self.client_id, s.ref, s.events, s.logs, baseline)
+        self._subscription, self._cursor = self.backend.subscribe(
+            self.client_id, s.ref, s.subscribed_events, s.logs, baseline
+        )
 
     def _next_seq(self) -> int:
         self._seq += 1
@@ -284,6 +304,10 @@ class Watcher:
 
     def _end_event(self, reason: str, **data: Any) -> Event:
         return Event(WATCH_ENDED, self.settings.ref.key, self._next_seq(), utc_now_iso(), {"reason": reason, **data})
+
+    def _timer_event(self, kind: str, data: dict[str, object]) -> Event:
+        """A threshold event, numbered with the rest when it is delivered."""
+        return Event(kind, self.settings.ref.key, 0, utc_now_iso(), dict(data))
 
     def _deliver(self, events: list[Event]) -> None:
         if not events:
@@ -303,6 +327,7 @@ class Watcher:
         self._seq = self.changelog.last_seq()
         resubscribed = False
         exit_code = EXIT_OK
+        timers = WatchTimers(self.settings.ref.kind, self.settings.thresholds, self.clock())
         try:
             self._subscribe(resubscribe=False)
             while True:
@@ -324,6 +349,7 @@ class Watcher:
                     self.changelog.save_baseline(self._snapshot_hash, snapshot.get("data"))
                     if self.writer is not None:
                         self.writer.snapshot(snapshot.get("data"))
+                    timers.snapshot(snapshot.get("data"), self.clock())
                 else:
                     previous_hash = self._snapshot_hash
                 raw = [Event.from_json(e) for e in (response.get("events") or {}).get(self._subscription) or []]
@@ -341,6 +367,9 @@ class Watcher:
                     resubscribed = False
                 if self.writer is not None:
                     events = self.writer.attach(events)
+                now = self.clock()
+                timers.reported(events, now)
+                events += [self._timer_event(kind, data) for kind, data in timers.due(now)]
                 events = [replace(e, seq=self._next_seq()) for e in events]
                 ended = next((e for e in events if e.kind == WATCH_ENDED), None)
                 hit = next((e for e in events if self.settings.until and e.kind == self.settings.until), None)
@@ -361,6 +390,9 @@ class Watcher:
                 wait = int(response.get("next_poll_ms", 5000)) / 1000.0
                 if deadline is not None:
                     wait = max(0.0, min(wait, deadline - self.clock()))
+                timer_in = timers.seconds_until_next(self.clock())
+                if timer_in is not None:
+                    wait = min(wait, timer_in)
                 flush_in = self.sink.seconds_until_flush()
                 if flush_in is not None:
                     wait = min(wait, flush_in)

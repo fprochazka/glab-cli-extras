@@ -15,7 +15,16 @@ from glab_cli_extras import __version__
 from glab_cli_extras.cli.stdio import force_utf8_stdio
 from glab_cli_extras.daemon.lifecycle import daemon_running, stop_daemon
 from glab_cli_extras.daemon.transport import DaemonFiles, DaemonUnavailable, request
-from glab_cli_extras.events import GROUPS, KINDS_BY_RESOURCE, LIFECYCLE_KINDS, FilterError, resolve_filter
+from glab_cli_extras.events import (
+    GROUPS,
+    KINDS_BY_RESOURCE,
+    LIFECYCLE_KINDS,
+    PIPELINE_STUCK,
+    QUIET,
+    THRESHOLD_OPTIONS,
+    FilterError,
+    resolve_filter,
+)
 from glab_cli_extras.gitlab.glab import GlabNotFoundError
 from glab_cli_extras.gitlab.refs import RefError, ResourceRef, parse_id_ref, parse_repo_ref
 from glab_cli_extras.sync.job_logs import LOGS_MODES, LogsMode
@@ -23,6 +32,7 @@ from glab_cli_extras.watch.changelog import Changelog
 from glab_cli_extras.watch.client import Backend, BackendError, Watcher, WatchSettings, default_backend
 from glab_cli_extras.watch.sinks import Sink, StatusOutput
 from glab_cli_extras.watch.streams import MESSAGE_PRIORITIES, STREAM_MODES, StreamError, open_stream
+from glab_cli_extras.watch.timers import Thresholds
 from glab_cli_extras.watch.writer import ResourceWriter
 
 EXIT_USAGE = 2
@@ -97,6 +107,22 @@ PriorityOpt = Annotated[
         help="claude-message only: now or next deliver into the running turn, later waits until the session is idle.",
     ),
 ]
+QuietAfterOpt = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--quiet-after",
+        help="Report quiet once per head when the head pipeline succeeded on it and nothing else was reported for "
+        "this long, for example 2m. Repeatable for several thresholds.",
+    ),
+]
+StuckAfterOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--stuck-after",
+        help="Report pipeline_stuck once per pipeline still running or pending this long after the watch first saw "
+        "it so, for example 30m.",
+    ),
+]
 LogsOpt = Annotated[str, typer.Option("--logs", help="Which finished jobs get their log fetched: failed, all or none.")]
 
 _DURATION_RE = re.compile(r"^(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+)s)?$")
@@ -111,6 +137,16 @@ def parse_duration(value: str) -> float:
         raise ValueError(f"cannot read the duration {value!r}; use for example 90s, 30m, 2h or 1h30m")
     parts = {k: int(v) if v else 0 for k, v in match.groupdict().items()}
     return float(parts["h"] * 3600 + parts["m"] * 60 + parts["s"])
+
+
+def _threshold(option: str, value: str) -> float:
+    try:
+        seconds = parse_duration(value)
+    except ValueError as exc:
+        _fail(f"{option}: {exc}")
+    if seconds <= 0:
+        _fail(f"{option}: the duration must be longer than zero")
+    return seconds
 
 
 def _fail(message: str, code: int = EXIT_USAGE) -> NoReturn:
@@ -141,9 +177,11 @@ def print_header(
     until: str | None,
     timeout: str | None,
     fallback: str | None = None,
+    thresholds: Thresholds | None = None,
 ) -> None:
     """The startup header: what is watched, how events are delivered, and how to restart with other options."""
-    tracked = KINDS_BY_RESOURCE[ref.kind]
+    # A threshold kind without its option is not tracked at all, rather than ignored.
+    tracked = [k for k in KINDS_BY_RESOURCE[ref.kind] if k not in THRESHOLD_OPTIONS or k in events]
     subscribed = [k for k in tracked if k in events]
     ignored = [k for k in tracked if k not in events]
     status.line(f"resource: {ref.key}")
@@ -156,6 +194,9 @@ def print_header(
     status.line(f"changelog: {changelog.events_path}")
     status.line(f"events: {','.join(subscribed) or '(none)'} (always: {','.join(LIFECYCLE_KINDS)})")
     status.line(f"ignored: {','.join(ignored) or '(none)'}")
+    described = thresholds.describe() if thresholds else []
+    if described:
+        status.line(f"thresholds: {'; '.join(described)}")
     if logs is not None:
         status.line(f"logs: {logs}")
     if until or timeout:
@@ -184,6 +225,8 @@ def run_watch(
     no_daemon: bool,
     message_priority: str,
     logs: str | None,
+    quiet_after: list[str] | None = None,
+    stuck_after: str | None = None,
 ) -> None:
     if events_stream not in STREAM_MODES:
         _fail(f"--events-stream must be one of {', '.join(STREAM_MODES)}")
@@ -191,8 +234,13 @@ def run_watch(
         _fail(f"--message-priority must be one of {', '.join(MESSAGE_PRIORITIES)}")
     if logs is not None and logs not in LOGS_MODES:
         _fail(f"--logs must be one of {', '.join(LOGS_MODES)}")
+    thresholds = Thresholds(
+        quiet_after=tuple(sorted({_threshold("--quiet-after", v) for v in quiet_after or ()})),
+        stuck_after=_threshold("--stuck-after", stuck_after) if stuck_after else None,
+    )
+    enabled = ([QUIET] if thresholds.quiet_after else []) + ([PIPELINE_STUCK] if thresholds.stuck_after else [])
     try:
-        selected = resolve_filter(kind, events, exclude_events)
+        selected = resolve_filter(kind, events, exclude_events, enabled)
     except FilterError as exc:
         _fail(str(exc))
     if until is not None and until not in KINDS_BY_RESOURCE[kind]:
@@ -230,10 +278,11 @@ def run_watch(
         until,
         timeout,
         stream.fallback,
+        thresholds,
     )
     writer = ResourceWriter(changelog.base, ref, backend, logs_mode, status)
     watcher = Watcher(
-        WatchSettings(ref, selected, logs_mode, until, timeout_s),
+        WatchSettings(ref, selected, logs_mode, until, timeout_s, thresholds),
         backend,
         stream.sink,
         changelog,
@@ -254,6 +303,8 @@ def mr(
     exclude_events: ExcludeOpt = None,
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
+    quiet_after: QuietAfterOpt = None,
+    stuck_after: StuckAfterOpt = None,
     events_stream: StreamOpt = "auto",
     base_dir: BaseDirOpt = None,
     message_priority: PriorityOpt = "next",
@@ -273,6 +324,8 @@ def mr(
         no_daemon=no_daemon,
         message_priority=message_priority,
         logs=None,
+        quiet_after=quiet_after,
+        stuck_after=stuck_after,
     )
 
 
@@ -284,6 +337,7 @@ def pipeline(
     logs: LogsOpt = "failed",
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
+    stuck_after: StuckAfterOpt = None,
     events_stream: StreamOpt = "auto",
     base_dir: BaseDirOpt = None,
     message_priority: PriorityOpt = "next",
@@ -302,6 +356,7 @@ def pipeline(
         no_daemon=no_daemon,
         message_priority=message_priority,
         logs=logs,
+        stuck_after=stuck_after,
     )
 
 

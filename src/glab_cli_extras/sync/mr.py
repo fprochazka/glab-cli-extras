@@ -57,6 +57,8 @@ class MrSnapshot:
     head_pipeline_status: str | None = None
     head_pipeline_project: str | None = None
     head_pipeline_web_url: str | None = None
+    head_pipeline_sha: str | None = None
+    """The commit the head pipeline ran on. GitLab keeps the old head pipeline until a push gets its own."""
     head_pipeline_failed_jobs: tuple[str, ...] = ()
     """The names of the head pipeline's failed jobs that may not fail; free in the same query."""
     threads: tuple[ThreadState, ...] | None = None
@@ -125,6 +127,7 @@ def parse_mr(node: Any, project: str, threads: tuple[ThreadState, ...] | None) -
         head_pipeline_status=lower(pipeline.get("status")) if pipeline else None,
         head_pipeline_project=((pipeline.get("project") or {}).get("fullPath") or project) if pipeline else None,
         head_pipeline_web_url=_web_url(node.get("webUrl"), pipeline.get("path")) if pipeline else None,
+        head_pipeline_sha=pipeline.get("sha") if pipeline else None,
         head_pipeline_failed_jobs=tuple(
             sorted(
                 str(j.get("name"))
