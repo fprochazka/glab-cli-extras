@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fakeglab import FakeGlab  # noqa: E402
+from glab_cli_extras.discussion.models import MrContext  # noqa: E402
 from glab_cli_extras.gitlab.client import GitLabClient  # noqa: E402
 from glab_cli_extras.resources.base import PollContext  # noqa: E402
 from shapes import HOST  # noqa: E402
@@ -30,6 +31,14 @@ class Clock:
 @pytest.fixture
 def clock() -> Clock:
     return Clock()
+
+
+@pytest.fixture
+def mr_context() -> MrContext:
+    """The MR of the ported glab-discussion command tests, which patch the API calls of each command."""
+    return MrContext(
+        "gitlab.example.com", 42, "group/project", 7, "https://gitlab.example.com/group/project/-/merge_requests/7"
+    )
 
 
 @pytest.fixture

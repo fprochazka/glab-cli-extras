@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from glab_cli_extras.cli.discussion import main
+
+
+class TestCli:
+    def test_no_args_shows_error(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main([])
+        assert exc_info.value.code == 2  # argparse error exit code
+
+    def test_read_help(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["read", "--help"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "--mr-url" in captured.out
+        assert "--dump" in captured.out
+
+    def test_write_help(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["write", "--help"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "--body" in captured.out
+        assert "--reply-to" in captured.out
+
+    def test_diff_help(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["diff", "--help"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "--file" in captured.out
+        assert "--version" in captured.out
+
+    def test_resolve_help(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["resolve", "--help"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "discussion_id" in captured.out
+        assert "--unresolve" in captured.out
+
+    def test_delete_help(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["delete", "--help"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "note:ID|draft:ID" in captured.out
+
+    def test_edit_help(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["edit", "--help"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "note:ID|draft:ID" in captured.out
+        assert "--body" in captured.out
+
+    def test_delete_requires_note_id(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["delete"])
+        assert exc_info.value.code == 2
+
+    def test_edit_requires_body(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["edit", "note:123"])
+        assert exc_info.value.code == 2
+
+    def test_edit_rejects_bare_number(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["edit", "123", "--body", "x"])
+        assert exc_info.value.code == 2
+        assert "Ambiguous ID '123': pass 'note:123'" in capsys.readouterr().err
+
+    def test_delete_rejects_bare_number(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["delete", "123"])
+        assert exc_info.value.code == 2
+        assert "'draft:123' for your pending draft" in capsys.readouterr().err
+
+    def test_write_draft_flags_are_exclusive(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["write", "--body", "x", "--draft", "--no-draft"])
+        assert exc_info.value.code == 2
+
+    def test_drafts_requires_subcommand(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["drafts"])
+        assert exc_info.value.code == 2
+
+    def test_drafts_publish_help(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["drafts", "publish", "--help"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "--verdict" in captured.out
+        assert "approve" in captured.out
+        assert "--internal" not in captured.out
+
+    def test_drafts_publish_rejects_unknown_verdict(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["drafts", "publish", "--verdict", "approved"])
+        assert exc_info.value.code == 2
+
+    def test_invalid_command(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["nonexistent"])
+        assert exc_info.value.code == 2
+
+
+class TestStdioEncoding:
+    def test_main_forces_utf8_on_the_standard_streams(self) -> None:
+        streams = {name: MagicMock() for name in ("stdin", "stdout", "stderr")}
+        with patch.multiple("glab_cli_extras.cli.discussion.sys", **streams), pytest.raises(SystemExit):
+            main(["read", "--help"])
+
+        for stream in streams.values():
+            stream.reconfigure.assert_called_once_with(encoding="utf-8")

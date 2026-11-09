@@ -80,6 +80,12 @@ module = [
   "test_pipeline_inspect_summary",
   "test_pipeline_models",
   "test_pipeline_summary_dict",
+  "test_discussion_cli",
+  "test_discussion_delete",
+  "test_discussion_diff",
+  "test_discussion_drafts",
+  "test_discussion_edit",
+  "test_discussion_write",
 ]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false

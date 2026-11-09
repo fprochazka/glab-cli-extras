@@ -4,7 +4,7 @@ Extra commands for the [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`),
 
 - `glab-watch` watches a merge request, a pipeline, all merge requests of a project, or a branch, and reports every change as one JSON event per line.
 - `glab-pipeline inspect` dumps a pipeline's state and job logs and prints a problem-driven summary.
-- `glab-discussion` reads a merge request's discussion threads into one file per thread.
+- `glab-discussion` reads a merge request's discussion threads into one file per thread, and writes comments, replies, resolves and reviews.
 
 Every GitLab request goes through `glab api`, so `glab` handles authentication, hosts, OAuth refresh, proxies and certificates. `glab-watch` never reads or stores a token. A shared per-user daemon does the polling, so ten watchers cost about as much API budget as one.
 
@@ -93,6 +93,15 @@ glab-discussion read                     # the current branch's MR: one file per
 glab-discussion read --mr-url <url>      # an explicit MR; also --mr-iid with --project and --hostname
 glab-discussion read --no-dump           # print every thread instead (the default in a terminal)
 glab-discussion read --full              # delete the thread files and write them all again
+glab-discussion write --body - < reply.md --reply-to <discussion id>     # reply to a thread
+glab-discussion write --body "…" --file src/app.py --new-line 42         # a diff note on a line of the newest diff version
+glab-discussion write --body "…" --draft                                 # a pending draft only you see
+glab-discussion resolve <discussion id>                                  # also --unresolve
+glab-discussion edit note:123 --body "…"                                 # or draft:123, as read prints the ids
+glab-discussion delete note:123
+glab-discussion diff --file src/app.py                                   # the diff with old and new line numbers
+glab-discussion drafts publish --body - < summary.md --verdict reviewed  # publish your drafts as one review
+glab-discussion drafts delete --force
 ```
 
 It is the command of the [glab-discussion](https://github.com/fprochazka/glab-discussion) package, with the same options and output. `read --dump` writes the threads into the `threads/` dir of the MR's dir (see [Files](#files)), the same dir `glab-watch mr` writes, and prints the dir and the files that changed:
@@ -104,6 +113,10 @@ Discussions: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_
 ```
 
 A thread file is fetched again only when its notes changed since the file was written, or when your draft replies in it changed. An unchanged MR costs one GraphQL request per 100 threads and one request for your drafts. Your drafts appear as `[DRAFT]` blocks in their thread, and a draft that starts a thread as `draft-<id>.txt`. Drafts belong to the login that wrote them, so only `read` shows them: a `glab-watch mr` rewrites a changed thread without your draft replies, and the next `read` puts them back.
+
+The write commands send every body as JSON on stdin, byte for byte: a trailing signature line such as `<!-- plugin:command -->` and the final newline reach GitLab unchanged. A write is never retried, because GitLab may have applied a write whose answer was lost, and a retry would post it twice. Each write command prints the URL of the MR it acted on. `GLAB_DISCUSSION_WRITE_AS_DRAFT=true` makes `write` save drafts unless `--no-draft` is given.
+
+`drafts publish` submits the review with GitLab's `/submit_review` quick action, which publishes your drafts and sets the verdict on every GitLab since 16.7, where the `bulk_publish` endpoint ignores the verdict before 19.2. Before it submits, it adds you as a reviewer if you are not one and checks that GitLab did, and it removes your earlier approval or request for changes that the new verdict replaces, because GitLab before 19.2 does not replace one verdict with another. Without `--verdict` it sets `reviewed`, but only when you have given the MR no verdict yet; your earlier verdict comes from the MR's system notes, because a draft resets your review state. Afterwards it reads the drafts, your review state and the approvals back, and exits with 1 when the verdict was not applied. `edit draft:<id>` sends an inline draft's position back with the new text, because GitLab since 16.3 turns an inline draft into a general one on an edit without it.
 
 The context flags are all or nothing: `--mr-url`, or `--mr-iid` with `--project` and `--hostname`, or none of them for the current branch's MR. A partial set is a usage error instead of silently using the current branch's MR.
 
