@@ -20,9 +20,9 @@ from glab_cli_extras.store.job_logs import has_log, write_log
 from glab_cli_extras.store.layout import THREADS_DIR, ensure_readme, pipeline_dir, resource_dir
 from glab_cli_extras.store.locks import LockTimeout
 from glab_cli_extras.store.state import load_state, locked, put_snapshot, save_state
-from glab_cli_extras.store.threads import ThreadStore
+from glab_cli_extras.store.threads import ThreadStore, render_thread
 from glab_cli_extras.sync.job_logs import LogsMode, wants_log
-from glab_cli_extras.sync.mr import MrSnapshot, thread_sig
+from glab_cli_extras.sync.mr import MrSnapshot, snapshot_users, thread_sig
 from glab_cli_extras.watch.sinks import StatusOutput
 
 if TYPE_CHECKING:
@@ -80,10 +80,11 @@ class ResourceWriter:
             self._sync_threads(set())
 
     def _thread_store(self) -> ThreadStore:
-        assert self.ref.id is not None
+        return ThreadStore(self.dir / THREADS_DIR)
+
+    def _mr_url(self) -> str:
         url = self._mr.web_url if self._mr is not None else None
-        fallback = f"https://{self.ref.host}/{self.ref.project}/-/merge_requests/{self.ref.id}"
-        return ThreadStore(self.dir / THREADS_DIR, url or fallback)
+        return url or f"https://{self.ref.host}/{self.ref.project}/-/merge_requests/{self.ref.id}"
 
     def _sync_threads(self, force: set[str]) -> None:
         snap = self._mr
@@ -93,8 +94,11 @@ class ResourceWriter:
             with locked(self.dir, LOCK_TIMEOUT):
                 store = self._thread_store()
                 current = {t.id: thread_sig(t) for t in snap.threads}
-                for gone in store.discussion_ids() - set(current):
-                    store.remove(gone)
+                gone = store.discussion_ids() - set(current)
+                for discussion_id in gone:
+                    store.remove(discussion_id)
+                if gone:
+                    store.save()
                 wanted = {
                     tid
                     for tid, sig in current.items()
@@ -104,8 +108,13 @@ class ResourceWriter:
                     self._pending_threads.clear()
                     return
                 discussions = self.backend.fetch_threads(self.ref, wanted)
+                users = snapshot_users(snap)
                 for tid, discussion in discussions.items():
-                    store.write(discussion, current.get(tid))
+                    filename, content = render_thread(discussion, self._mr_url(), users)
+                    # The watch renders published notes only; `glab-discussion read` adds the user's draft replies
+                    # back, because their empty `drafts_sig` no longer matches.
+                    store.write(tid, filename, content, sig=current.get(tid), drafts_sig="")
+                store.save()
                 # A thread GitLab did not return (rewritten for a moment after a force-push) keeps its old file.
                 self._pending_threads = wanted - set(discussions)
         except (LockTimeout, OSError, ApiError, RuntimeError, ValueError) as exc:

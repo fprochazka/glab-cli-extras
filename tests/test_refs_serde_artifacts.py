@@ -5,12 +5,13 @@ from pathlib import Path
 import pytest
 
 from fakeglab import FakeGlab
+from glab_cli_extras.discussion.models import UserInfo
 from glab_cli_extras.gitlab.refs import RefError, ResourceRef, parse_id_ref, parse_repo_ref
 from glab_cli_extras.paths import project_dir, sanitize_part
 from glab_cli_extras.resources.mr import MrSnapshot, parse_mr, parse_threads
 from glab_cli_extras.resources.pipeline import PipelineSnapshot, parse_pipeline
 from glab_cli_extras.serde import from_jsonable, stable_hash, to_jsonable
-from glab_cli_extras.store.threads import ThreadStore, render_discussion
+from glab_cli_extras.store.threads import ThreadStore, render_thread
 from shapes import HOST, PROJECT, gql_job, gql_mr, gql_pipeline, gql_thread, rest_discussion
 
 REPO_VIEW = {"id": 321, "path_with_namespace": PROJECT, "web_url": f"https://{HOST}/{PROJECT}"}
@@ -64,26 +65,53 @@ def test_snapshots_survive_json() -> None:
         from_jsonable(MrSnapshot, {"iid": "not a number"})
 
 
+USERS = {
+    "reviewer-one": UserInfo(0, "reviewer-one", "Reviewer One", False),
+    "review-bot": UserInfo(0, "review-bot", "Review Bot", True),
+    "service_account_group_1a2b": UserInfo(0, "service_account_group_1a2b", "Lint Service", True),
+}
+MR_URL = f"https://{HOST}/{PROJECT}/-/merge_requests/42"
+
+
 def test_thread_files_are_rewritten_only_on_change(tmp_path: Path) -> None:
-    store = ThreadStore(tmp_path / "threads", f"https://{HOST}/{PROJECT}/-/merge_requests/42")
+    store = ThreadStore(tmp_path / "threads")
     discussion = rest_discussion("abc123def4567890", [(1, "reviewer-one", "Please add a test.")])
-    path, written = store.write(discussion)
-    assert written and path.name == "2026-11-09T09-30-reviewer-one-abc123def456.md"
-    assert store.write(discussion) == (path, False)
+    name, content = render_thread(discussion, MR_URL, USERS)
+    first = store.write("abc123def4567890", name, content, sig="s1")
+    assert first.status == "new" and first.path.name == "2026-11-09T09-30-reviewer-one-abc123def456.txt"
+    assert store.write("abc123def4567890", name, content).status == "unchanged"
     discussion["notes"].append(rest_discussion("x", [(2, "author-one", "Added.")])["notes"][0])
-    _, written = store.write(discussion)
-    assert written and "@author-one (note:2):\nAdded." in path.read_text()
-    reopened = ThreadStore(tmp_path / "threads", store.mr_url)
-    assert reopened.write(discussion) == (path, False)
+    name, content = render_thread(discussion, MR_URL, USERS)
+    assert store.write("abc123def4567890", name, content, sig="s2").status == "updated"
+    assert "@author-one (note:2):\nAdded." in first.path.read_text()
+    store.save()
+    reopened = ThreadStore(tmp_path / "threads")
+    assert reopened.sig("abc123def4567890") == "s2"
+    assert reopened.write("abc123def4567890", name, content).status == "unchanged"
     reopened.remove("abc123def4567890")
-    assert not path.exists()
+    assert not first.path.exists()
+
+
+def test_bot_authors_and_service_accounts_are_named_as_glab_discussion_names_them(tmp_path: Path) -> None:
+    bot = rest_discussion("bot0000000000001", [(3, "review-bot", "Nothing gating.\n\n<!-- plugin:command -->\n")])
+    name, content = render_thread(bot, MR_URL, USERS)
+    assert name == "2026-11-09T09-30-bot-review-bot-bot000000000.txt"
+    assert "@review-bot [BOT] (note:3):\nNothing gating.\n\n<!-- plugin:command -->\n" in content
+    service = rest_discussion("svc0000000000001", [(4, "service_account_group_1a2b", "Quality gate passed.")])
+    name, _ = render_thread(service, MR_URL, USERS)
+    assert name == "2026-11-09T09-30-bot-Lint-Service-svc000000000.txt"
+
+
+def test_a_name_read_back_from_the_index_never_deletes_outside_the_dir(tmp_path: Path) -> None:
+    (tmp_path / "outside.txt").write_text("keep")
+    store = ThreadStore(tmp_path / "threads")
+    store.meta["evil"] = {"filename": "../outside.txt", "hash": "x"}
+    store.remove("evil")
+    assert (tmp_path / "outside.txt").read_text() == "keep"
 
 
 def test_render_matches_the_glab_discussion_layout() -> None:
-    text = render_discussion(
-        rest_discussion("d1", [(5, "reviewer-one", "Nit.")], resolved=True, diff=True),
-        "https://gitlab.example.com/group/project/-/merge_requests/42",
-    )
+    _, text = render_thread(rest_discussion("d1", [(5, "reviewer-one", "Nit.")], resolved=True, diff=True), MR_URL, {})
     assert text.splitlines()[:7] == [
         "Discussion: d1",
         "Type: DiffNote",

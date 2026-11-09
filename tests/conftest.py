@@ -48,3 +48,14 @@ def _isolated_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
     for name in ("CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID"):
         monkeypatch.delenv(name, raising=False)
     yield
+
+
+from discussion_samples import (  # noqa: E402, F401  the fixtures of the tests ported from glab-discussion
+    diff_discussion,
+    general_discussion,
+    sample_diff_note,
+    sample_note,
+    sample_position,
+    sample_system_note,
+    system_discussion,
+)

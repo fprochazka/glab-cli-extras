@@ -33,7 +33,7 @@ query MergeRequestSnapshot(
           resolvable
           resolved
           notes(first: 100) {
-            nodes { id updatedAt system author { username } }
+            nodes { id updatedAt system author { username name bot } }
           }
         }
       }

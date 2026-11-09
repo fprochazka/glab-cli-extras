@@ -1,7 +1,9 @@
-"""One markdown file per MR discussion thread, in the format glab-discussion uses.
+"""One text file per MR discussion thread, in glab-discussion's format, and the `.meta.json` index next to them.
 
-A file is rewritten only when its rendered content changed, so its mtime says when the thread last changed. The
-`.meta.json` next to the files maps each discussion id to its file name and content hash.
+A file is rewritten only when its rendered content changed, so its mtime says when the thread last changed. The index
+maps each key (a discussion id, or `draft-<id>` for a draft that starts a thread) to its file name, its content hash,
+`sig`, the version of the published notes it was rendered from, and `drafts_sig`, the version of the user's draft
+replies in it. A watch compares `sig` only and renders no drafts; `glab-discussion read` compares both.
 """
 
 from __future__ import annotations
@@ -9,41 +11,17 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from glab_cli_extras.paths import sanitize_part
+from glab_cli_extras.discussion.formatter import format_discussion
+from glab_cli_extras.discussion.models import Discussion, DraftNote, UserInfo, parse_discussion
 from glab_cli_extras.store.atomic import atomic_write_text
 
 META_FILE = ".meta.json"
-
-
-def _endpoint(old_line: Any, new_line: Any) -> str:
-    parts = []
-    if new_line is not None:
-        parts.append(f"new:{new_line}")
-    if old_line is not None:
-        parts.append(f"old:{old_line}")
-    return " / ".join(parts)
-
-
-def _position_lines(position: Mapping[str, Any]) -> list[str]:
-    lines = [f"File: {position.get('new_path') or position.get('old_path')}"]
-    line_range = position.get("line_range")
-    if isinstance(line_range, dict) and line_range.get("start") and line_range.get("end"):
-        start, end = line_range["start"], line_range["end"]
-        lines.append(
-            f"Lines: {_endpoint(start.get('old_line'), start.get('new_line'))}"
-            f" to {_endpoint(end.get('old_line'), end.get('new_line'))}"
-        )
-    else:
-        line = _endpoint(position.get("old_line"), position.get("new_line"))
-        if line:
-            lines.append(f"Line: {line}")
-    if position.get("head_sha"):
-        lines.append(f"Commit: {position['head_sha']}")
-    return lines
 
 
 def is_system_discussion(discussion: Mapping[str, Any]) -> bool:
@@ -51,52 +29,65 @@ def is_system_discussion(discussion: Mapping[str, Any]) -> bool:
     return bool(notes) and all(n.get("system") for n in notes)
 
 
-def render_discussion(discussion: Mapping[str, Any], mr_url: str) -> str:
-    """Render a REST discussion object as text: a header, then one block per note."""
-    notes: list[Mapping[str, Any]] = list(discussion.get("notes") or [])
-    first = notes[0] if notes else {}
-    lines = [f"Discussion: {discussion.get('id')}"]
-    position = first.get("position")
-    if first.get("type") == "DiffNote" and isinstance(position, dict):
-        lines.append("Type: DiffNote")
-        lines.extend(_position_lines(position))
-    else:
-        lines.append("Type: General")
-    resolvable = [n for n in notes if n.get("resolvable")]
-    if resolvable:
-        lines.append(f"Resolved: {'yes' if all(n.get('resolved') for n in resolvable) else 'no'}")
-    if first.get("id") is not None:
-        lines.append(f"URL: {mr_url}#note_{first['id']}")
-    lines.append("---")
-    for note in notes:
-        author = (note.get("author") or {}).get("username", "unknown")
-        timestamp = str(note.get("created_at", "")).replace("T", " ").split(".")[0].removesuffix("Z")
-        lines.append(f"[{timestamp}] @{author} (note:{note.get('id')}):")
-        lines.append(str(note.get("body", "")))
-        lines.append("")
-    return "\n".join(lines)
+def filename_part(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]", "-", value)
 
 
-def thread_filename(discussion: Mapping[str, Any]) -> str:
-    """`<created, to the minute>-<author>-<id prefix>.md`, so a directory listing sorts threads by start time."""
-    notes = discussion.get("notes") or [{}]
-    first = notes[0]
-    created = sanitize_part(str(first.get("created_at", ""))[:16].replace(":", "-")) or "unknown"
-    author = sanitize_part(str((first.get("author") or {}).get("username", "unknown")))
-    short_id = sanitize_part(str(discussion.get("id", ""))[:12])
-    return f"{created}-{author}-{short_id}.md"
+def display_name(user: UserInfo) -> str:
+    """The name for file names: the display name for service accounts, whose usernames are random, else the username."""
+    stripped = user.username.replace("-", "").replace("_", "")
+    if "serviceaccount" in stripped:
+        return user.name
+    return user.username
 
 
-def _hash(content: str) -> str:
+def thread_filename(discussion: Discussion, users: Mapping[str, UserInfo]) -> str:
+    """`<created, to the minute>-<author, bot- prefix for bots>-<id prefix>.txt`, so a listing sorts by start time."""
+    first = discussion.first_note
+    created = filename_part(first.created_at[:16])
+    user = users.get(first.author_username)
+    name = filename_part(display_name(user) if user else first.author_username)
+    if user and user.is_bot:
+        name = f"bot-{name}"
+    return f"{created}-{name}-{filename_part(discussion.id[:12])}.txt"
+
+
+def parse_with_users(raw: Mapping[str, Any], users: Mapping[str, UserInfo]) -> Discussion:
+    discussion = parse_discussion(dict(raw))
+    for note in discussion.notes:
+        user = users.get(note.author_username)
+        note.is_bot = bool(user and user.is_bot)
+    return discussion
+
+
+def render_thread(
+    raw: Mapping[str, Any], mr_url: str, users: Mapping[str, UserInfo], reply_drafts: Sequence[DraftNote] = ()
+) -> tuple[str, str]:
+    """The file name and the content of a REST discussion's thread file."""
+    discussion = parse_with_users(raw, users)
+    return thread_filename(discussion, users), format_discussion(discussion, mr_url, reply_drafts)
+
+
+def content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+WriteStatus = Literal["new", "updated", "unchanged"]
+
+
+@dataclass(frozen=True, slots=True)
+class WriteResult:
+    path: Path
+    status: WriteStatus
+    replaced: str | None
+    """The old file name, when the thread was renamed (its first author's display name changed, for example)."""
+
+
 class ThreadStore:
-    def __init__(self, directory: Path, mr_url: str) -> None:
+    def __init__(self, directory: Path) -> None:
         self.directory = directory
-        self.mr_url = mr_url
         self._meta_path = directory / META_FILE
-        self._meta: dict[str, dict[str, str]] = self._load_meta()
+        self.meta: dict[str, dict[str, str]] = self._load_meta()
 
     def _load_meta(self) -> dict[str, dict[str, str]]:
         try:
@@ -107,52 +98,74 @@ class ThreadStore:
             return {}
         return {str(k): v for k, v in raw.items() if isinstance(v, dict)}
 
-    def _save_meta(self) -> None:
-        atomic_write_text(self._meta_path, json.dumps(self._meta, indent=2, sort_keys=True) + "\n")
+    def save(self) -> None:
+        atomic_write_text(self._meta_path, json.dumps(self.meta, indent=2, sort_keys=True) + "\n")
 
-    def path_for(self, discussion_id: str) -> Path | None:
-        entry = self._meta.get(discussion_id)
-        if not entry:
+    def safe_file(self, filename: str) -> Path | None:
+        """The path of a file named in `.meta.json`, or None when the name could point outside the dir."""
+        if not filename or "/" in filename or "\\" in filename or filename.startswith("."):
             return None
-        path = self.directory / entry["filename"]
-        return path if path.is_file() else None
+        path = self.directory / filename
+        if path.resolve().parent != self.directory.resolve():
+            return None
+        return path
 
-    def sig(self, discussion_id: str) -> str | None:
-        """The signature of the note versions the thread's file was rendered from, None when unknown."""
-        entry = self._meta.get(discussion_id)
+    def path_for(self, key: str) -> Path | None:
+        entry = self.meta.get(key)
+        path = self.safe_file(entry.get("filename", "")) if entry else None
+        return path if path is not None and path.is_file() else None
+
+    def sig(self, key: str) -> str | None:
+        entry = self.meta.get(key)
         return entry.get("sig") if entry else None
 
+    def drafts_sig(self, key: str) -> str | None:
+        entry = self.meta.get(key)
+        return entry.get("drafts_sig") if entry else None
+
     def discussion_ids(self) -> set[str]:
-        """The discussions that have a file. Draft keys (`draft-<id>`) are not discussions and never listed."""
-        return {key for key in self._meta if not key.startswith("draft-")}
+        """The discussions that have a file. Draft keys (`draft-<id>`) are not discussions and are never listed."""
+        return {key for key in self.meta if not key.startswith("draft-")}
 
-    def write(self, discussion: Mapping[str, Any], sig: str | None = None) -> tuple[Path, bool]:
-        """Write the thread's file if its content changed. Return the path and whether it was written."""
-        discussion_id = str(discussion["id"])
-        content = render_discussion(discussion, self.mr_url)
-        filename = thread_filename(discussion)
-        path = self.directory / filename
-        digest = _hash(content)
-        old = self._meta.get(discussion_id)
-        if old and old.get("hash") == digest and old.get("filename") == filename and path.is_file():
-            if sig is not None and old.get("sig") != sig:
-                old["sig"] = sig
-                self._save_meta()
-            return path, False
-        atomic_write_text(path, content)
-        if old and old.get("filename") and old["filename"] != filename:
-            with contextlib.suppress(OSError):
-                (self.directory / old["filename"]).unlink()
-        self._meta[discussion_id] = {"filename": filename, "hash": digest}
+    def write(
+        self, key: str, filename: str, content: str, *, sig: str | None = None, drafts_sig: str | None = None
+    ) -> WriteResult:
+        """Write the thread's file if its content or name changed, and record it. Call `save()` afterwards."""
+        self.directory.mkdir(parents=True, exist_ok=True)
+        digest = content_hash(content)
+        old = self.meta.get(key)
+        entry = {"filename": filename, "hash": digest}
         if sig is not None:
-            self._meta[discussion_id]["sig"] = sig
-        self._save_meta()
-        return path, True
+            entry["sig"] = sig
+        elif old and "sig" in old:
+            entry["sig"] = old["sig"]
+        if drafts_sig is not None:
+            entry["drafts_sig"] = drafts_sig
+        elif old and "drafts_sig" in old:
+            entry["drafts_sig"] = old["drafts_sig"]
+        path = self.directory / filename
+        if old and old.get("hash") == digest and old.get("filename") == filename and path.is_file():
+            self.meta[key] = entry
+            return WriteResult(path, "unchanged", None)
+        atomic_write_text(path, content)
+        replaced = None
+        if old and old.get("filename") and old["filename"] != filename:
+            replaced = old["filename"]
+            stale = self.safe_file(replaced)
+            if stale is not None and replaced not in {e.get("filename") for k, e in self.meta.items() if k != key}:
+                with contextlib.suppress(OSError):
+                    stale.unlink()
+        self.meta[key] = entry
+        return WriteResult(path, "new" if old is None else "updated", replaced)
 
-    def remove(self, discussion_id: str) -> None:
-        entry = self._meta.pop(discussion_id, None)
+    def remove(self, key: str) -> str | None:
+        """Forget a thread and delete its file. Return the file name. Call `save()` afterwards."""
+        entry = self.meta.pop(key, None)
         if entry is None:
-            return
-        with contextlib.suppress(OSError):
-            (self.directory / entry["filename"]).unlink()
-        self._save_meta()
+            return None
+        filename = entry.get("filename", "")
+        path = self.safe_file(filename)
+        if path is not None and filename not in {e.get("filename") for e in self.meta.values()}:
+            with contextlib.suppress(OSError):
+                path.unlink()
+        return filename

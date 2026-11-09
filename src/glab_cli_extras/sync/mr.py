@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from glab_cli_extras.discussion.models import UserInfo
 from glab_cli_extras.gitlab import queries
 from glab_cli_extras.gitlab.client import GitLabClient, NotFound, encode_project
 from glab_cli_extras.gitlab.refs import ResourceRef
@@ -22,6 +23,8 @@ class NoteState:
     id: int
     updated_at: str
     author: str | None
+    author_name: str | None = None
+    author_bot: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +80,8 @@ def parse_threads(nodes: list[Any]) -> tuple[ThreadState, ...]:
                         id=gid_to_int(n["id"]),
                         updated_at=str(n.get("updatedAt") or ""),
                         author=(n.get("author") or {}).get("username"),
+                        author_name=(n.get("author") or {}).get("name"),
+                        author_bot=bool((n.get("author") or {}).get("bot")),
                     )
                     for n in notes
                     if not n.get("system")
@@ -111,6 +116,17 @@ def parse_mr(node: Any, project: str, threads: tuple[ThreadState, ...] | None) -
         head_pipeline_project=((pipeline.get("project") or {}).get("fullPath") or project) if pipeline else None,
         threads=threads,
     )
+
+
+def snapshot_users(snapshot: MrSnapshot) -> dict[str, UserInfo]:
+    """The note authors the snapshot knows, by username, with GitLab's bot flag and display name. A thread file
+    needs both, and taking them from the snapshot saves a user lookup per author."""
+    users: dict[str, UserInfo] = {}
+    for thread in snapshot.threads or ():
+        for note in thread.notes:
+            if note.author:
+                users[note.author] = UserInfo(0, note.author, note.author_name or note.author, note.author_bot)
+    return users
 
 
 def thread_sig(thread: ThreadState) -> str:

@@ -108,7 +108,7 @@ The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipel
 - `state.json`: the latest state of the pipeline or MR, written on every change.
 - `events.jsonl`: every event the watcher reported, and `baseline.json`, the last state this watcher saw.
 - `job-logs/<stage>-<name>-<job id>.log` in a pipeline's dir. A log is downloaded once, a few seconds after the job ends. On GitLab 19.0 and later a log above 500 KB is read as its last 500 KB only, and the file starts with a `[glab-cli-extras: last …]` line. The log of a downstream job goes to its own pipeline's dir.
-- `threads/<created>-<author>-<id>.md` in an MR's dir, one file per discussion thread. It is rewritten only when the thread changed: a new reply, an edit, a resolve.
+- `threads/<created>-<author>-<id>.txt` in an MR's dir, one file per discussion thread, in glab-discussion's format: a header with the full discussion id, the type, the file and line of a diff note, `Resolved:` on resolvable threads and the URL, then one `[<created>] @<username> (note:<id>):` block per note. Bot authors get a `bot-` file name prefix and a `[BOT]` tag, service accounts their display name. A file is rewritten only when the thread changed: a new reply, an edit, a resolve. `.meta.json` maps each discussion id to its file.
 
 The daemon writes no files. It fetches each log and each changed thread once, keeps it in memory for a while, and hands it to every watcher that asks, so ten watchers of one pipeline cost one download. The watchers write the files.
 
@@ -125,7 +125,7 @@ With the default `--events-stream=auto`, a watcher that runs under a Claude Code
 ```text
 <glab-cli-extras-watcher resource="mr gitlab.example.com/group/project!123" seq="18-19" changelog="/tmp/claude-1000/…/scratchpad/glab-cli-extras/gitlab.example.com/group/project/-/merge_requests/123/events.jsonl">
 {"kind":"head_pipeline_changed","seq":18,"data":{"pipeline_id":456,"status":"running","previous_pipeline_id":455}}
-{"kind":"thread_created","seq":19,"data":{"discussion_id":"6a1f…","author":"reviewer-one","resolvable":true,"resolved":false,"notes":1},"artifacts":["/tmp/claude-1000/…/scratchpad/glab-cli-extras/…/merge_requests/123/threads/2026-11-09T09-30-reviewer-one-6a1f….md"]}
+{"kind":"thread_created","seq":19,"data":{"discussion_id":"6a1f…","author":"reviewer-one","resolvable":true,"resolved":false,"notes":1},"artifacts":["/tmp/claude-1000/…/scratchpad/glab-cli-extras/…/merge_requests/123/threads/2026-11-09T09-30-reviewer-one-6a1f….txt"]}
 </glab-cli-extras-watcher>
 ```
 
@@ -192,7 +192,6 @@ glab-watch daemon stop        # running watchers start a new daemon on their nex
 - **Branch pipeline probes are cheap only on quiet projects.** GitLab touches the ETag key of a project's pipelines on any pipeline change in the project. In a busy monorepo nearly every 10 s probe is a full request.
 - **`mr_updated` is best effort.** GitLab does not move an MR's `updated_at` when it was touched less than a minute before, so a second change within that minute shows up only with the next change.
 - **Job logs of large jobs need GitLab 19.0** for the tail-only download. Older versions download the whole log.
-- **Thread files have no bot marker** and use usernames, not display names, because that would cost a user lookup per author.
 - **Deeper downstream pipelines** (a child of a child) are not watched. Their changes do reach the watched pipeline's ETag, but their jobs are not reported.
 - **SSH host aliases** in git remotes are resolved by glab, as glab resolves them. A remote glab cannot map to a configured host fails at start.
 

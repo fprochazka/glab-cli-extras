@@ -63,7 +63,7 @@ def test_mr_snapshot_writes_state_and_only_the_threads_whose_notes_changed(tmp_p
     assert state["resource"] == MR.key and state["snapshot"]["iid"] == 42
     assert (mr_dir / "README.txt").is_file()
     assert backend.thread_requests == [{"aaa111", "bbb222"}]
-    files = sorted(p.name for p in (mr_dir / "threads").glob("*.md"))
+    files = sorted(p.name for p in (mr_dir / "threads").glob("*.txt"))
     assert len(files) == 2
 
     # A second writer, as in a new watch of the same session, fetches nothing that is already on disk.
@@ -75,7 +75,7 @@ def test_mr_snapshot_writes_state_and_only_the_threads_whose_notes_changed(tmp_p
     a2 = gql_thread("aaa111", [(1, "2026-11-09T09:00:00Z", "reviewer-one"), (2, "2026-11-09T11:00:00Z", "author-one")])
     again.snapshot(mr_snapshot(a2))
     assert backend.thread_requests[-1] == {"aaa111"}
-    assert len(list((mr_dir / "threads").glob("*.md"))) == 1
+    assert len(list((mr_dir / "threads").glob("*.txt"))) == 1
     [updated] = again.attach([event("thread_updated", discussion_id="aaa111")])
     assert Path(updated.artifacts[0]).parent == mr_dir / "threads"
     [started] = again.attach([event("watch_started", summary={"threads": {"total": 1}})])
@@ -93,11 +93,11 @@ def test_a_thread_gitlab_did_not_return_keeps_its_file_and_is_fetched_again(tmp_
     a2 = gql_thread("aaa111", [(1, "2026-11-09T09:05:00Z", "reviewer-one")])
     w.snapshot(mr_snapshot(a2))
     threads = tmp_path / HOST / "group" / "project" / "-" / "merge_requests" / "42" / "threads"
-    assert len(list(threads.glob("*.md"))) == 1
+    assert len(list(threads.glob("*.txt"))) == 1
     backend.discussions["aaa111"] = rest_discussion("aaa111", [(1, "reviewer-one", "Edited.")])
     w.attach([])
     assert backend.thread_requests[-1] == {"aaa111"}
-    assert "Edited." in next(threads.glob("*.md")).read_text()
+    assert "Edited." in next(threads.glob("*.txt")).read_text()
 
 
 def test_job_finished_writes_the_log_into_the_jobs_pipeline_dir_once(tmp_path: Path) -> None:
