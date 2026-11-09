@@ -65,6 +65,7 @@ class Route:
 @dataclass
 class Call:
     args: list[str]
+    stdin: bytes | None = None
 
     @property
     def endpoint(self) -> str:
@@ -80,23 +81,34 @@ class Call:
         return result
 
     @property
-    def fields(self) -> dict[str, str]:
-        result = {}
+    def method(self) -> str:
         for flag, value in zip(self.args, self.args[1:], strict=False):
-            if flag in ("-f", "-F"):
-                name, _, val = value.partition("=")
-                result[name] = val
-        return result
+            if flag == "-X":
+                return value
+        return "GET"
+
+    @property
+    def body(self) -> Any:
+        """The JSON request body glab got on stdin, or None."""
+        return json.loads(self.stdin) if self.stdin else None
+
+    @property
+    def variables(self) -> dict[str, Any]:
+        body = self.body
+        return dict(body.get("variables") or {}) if isinstance(body, dict) else {}
 
 
-def answer(routes: Sequence[Route], args: Sequence[str], repo_view: Any = None) -> ProcessResult:
-    call = Call(list(args))
+def answer(
+    routes: Sequence[Route], args: Sequence[str], repo_view: Any = None, stdin: bytes | None = None
+) -> ProcessResult:
+    call = Call(list(args), stdin)
     if list(args[:2]) == ["repo", "view"]:
         if repo_view is None:
             return ProcessResult(0, json.dumps({"error": {"message": "no git remotes found"}}).encode(), b"")
         return ProcessResult(0, json.dumps(repo_view).encode(), b"")
-    joined = " ".join(args)
-    target = call.fields.get("query", "") if call.endpoint == "graphql" else call.endpoint
+    joined = " ".join(args) + (" " + stdin.decode("utf-8") if stdin else "")
+    body = call.body
+    target = str(body.get("query", "")) if call.endpoint == "graphql" and isinstance(body, dict) else call.endpoint
     for route in routes:
         if route.match not in target or (route.contains and route.contains not in joined):
             continue
@@ -122,13 +134,13 @@ class FakeGlab:
         self.repo_view = repo_view
         self.calls: list[Call] = []
 
-    async def __call__(self, args: Sequence[str], timeout: float) -> ProcessResult:
-        self.calls.append(Call(list(args)))
-        return answer(self.routes, args, self.repo_view)
+    async def __call__(self, args: Sequence[str], timeout: float, stdin: bytes | None = None) -> ProcessResult:
+        self.calls.append(Call(list(args), stdin))
+        return answer(self.routes, args, self.repo_view, stdin)
 
-    def sync(self, args: Sequence[str]) -> ProcessResult:
-        self.calls.append(Call(list(args)))
-        return answer(self.routes, args, self.repo_view)
+    def sync(self, args: Sequence[str], timeout: float = 0, stdin: bytes | None = None) -> ProcessResult:
+        self.calls.append(Call(list(args), stdin))
+        return answer(self.routes, args, self.repo_view, stdin)
 
     def endpoints(self) -> list[str]:
         return [c.endpoint for c in self.calls]
@@ -155,11 +167,12 @@ def install_fake_glab(bin_dir: Path) -> None:
 def _main(argv: list[str]) -> int:
     spec = json.loads(Path(os.environ["FAKE_GLAB_SPEC"]).read_text(encoding="utf-8"))
     routes = [Route(**r) for r in spec.get("routes", [])]
+    stdin = sys.stdin.buffer.read() if "--input" in argv else None
     log = os.environ.get("FAKE_GLAB_LOG")
     if log:
         with open(log, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(argv) + "\n")
-    result = answer(routes, argv, spec.get("repo_view"))
+    result = answer(routes, argv, spec.get("repo_view"), stdin)
     sys.stdout.buffer.write(result.stdout)
     sys.stderr.buffer.write(result.stderr)
     return result.returncode

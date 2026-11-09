@@ -53,16 +53,17 @@ class HttpResponse:
     def json(self) -> Any:
         if not self.body.strip():
             return None
-        return json.loads(self.body)
+        # strict=False: a raw control character in a title or a note body must not fail the whole response.
+        return json.loads(self.body.decode("utf-8"), strict=False)
 
     def text(self) -> str:
         return self.body.decode("utf-8", errors="replace")
 
 
 class GlabRunner(Protocol):
-    """Run glab with the given arguments (without the `glab` executable itself)."""
+    """Run glab with the given arguments (without the `glab` executable itself), with `stdin` as its input."""
 
-    async def __call__(self, args: Sequence[str], timeout: float) -> ProcessResult: ...
+    async def __call__(self, args: Sequence[str], timeout: float, stdin: bytes | None = None) -> ProcessResult: ...
 
 
 def glab_executable() -> str:
@@ -78,18 +79,18 @@ def _child_env() -> dict[str, str]:
     return env
 
 
-async def run_glab(args: Sequence[str], timeout: float) -> ProcessResult:
-    """The default runner: no shell, stdin from devnull, a hard timeout."""
+async def run_glab(args: Sequence[str], timeout: float, stdin: bytes | None = None) -> ProcessResult:
+    """The default runner: no shell, stdin from devnull unless a body is given, a hard timeout."""
     process = await asyncio.create_subprocess_exec(
         glab_executable(),
         *args,
-        stdin=asyncio.subprocess.DEVNULL,
+        stdin=asyncio.subprocess.DEVNULL if stdin is None else asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=_child_env(),
     )
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
+        stdout, stderr = await asyncio.wait_for(process.communicate(stdin), timeout)
     except (TimeoutError, asyncio.CancelledError):
         with contextlib.suppress(ProcessLookupError):
             process.kill()
@@ -98,11 +99,12 @@ async def run_glab(args: Sequence[str], timeout: float) -> ProcessResult:
     return ProcessResult(process.returncode if process.returncode is not None else -1, stdout, stderr)
 
 
-def run_glab_sync(args: Sequence[str], timeout: float = DEFAULT_TIMEOUT) -> ProcessResult:
+def run_glab_sync(args: Sequence[str], timeout: float = DEFAULT_TIMEOUT, stdin: bytes | None = None) -> ProcessResult:
     """The blocking variant, for the CLI, which resolves refs before any event loop runs."""
     completed = subprocess.run(
         [glab_executable(), *args],
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL if stdin is None else None,
+        input=stdin,
         capture_output=True,
         timeout=timeout,
         env=_child_env(),
@@ -117,26 +119,28 @@ def build_api_args(
     *,
     method: str | None = None,
     headers: Mapping[str, str] | None = None,
-    fields: Mapping[str, str] | None = None,
-    typed_fields: Mapping[str, str | int | bool] | None = None,
+    json_body: bool = False,
 ) -> list[str]:
     """Build the argument list for `glab api -i`.
 
-    `fields` become `-f name=value` (always strings); `typed_fields` become `-F name=value`, which glab converts to
-    JSON numbers and booleans. For `graphql`, glab sends `query` as the query and every other field as a variable.
+    A request body is always JSON on stdin (`--input -`), never `-f`/`-F` fields: `-F` turns `true` and numbers into
+    JSON types and reads a value starting with `@` as a file, form fields flatten nested objects such as a diff note's
+    `position` (GitLab then drops it silently), and neither can send a list. GraphQL goes the same way, as
+    `{"query": ..., "variables": ...}`.
     """
     args = ["api", "--hostname", host, "-i"]
     if method is not None:
         args += ["-X", method]
     for name, value in (headers or {}).items():
         args += ["-H", f"{name}: {value}"]
-    for name, value in (fields or {}).items():
-        args += ["-f", f"{name}={value}"]
-    for name, typed in (typed_fields or {}).items():
-        rendered = ("true" if typed else "false") if isinstance(typed, bool) else str(typed)
-        args += ["-F", f"{name}={rendered}"]
+    if json_body:
+        args += ["-H", "Content-Type: application/json", "--input", "-"]
     args.append(endpoint)
     return args
+
+
+def json_bytes(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def parse_include_output(stdout: bytes) -> HttpResponse | None:
@@ -166,6 +170,19 @@ def parse_include_output(stdout: bytes) -> HttpResponse | None:
             headers[name.strip().lower()] = value.strip()
     body = stdout[position:] if position <= len(stdout) else b""
     return HttpResponse(status, reason, headers, body)
+
+
+def error_message(response: HttpResponse) -> str:
+    """GitLab's own error text from an error response, else the status line."""
+    try:
+        payload = response.json()
+    except (ValueError, UnicodeDecodeError):
+        payload = None
+    if isinstance(payload, dict):
+        for key in ("message", "error", "error_description"):
+            if key in payload:
+                return str(payload[key])
+    return f"HTTP {response.status} {response.reason}".strip()
 
 
 def stderr_message(result: ProcessResult) -> str:

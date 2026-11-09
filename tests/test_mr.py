@@ -165,8 +165,8 @@ def test_filter_without_comments_or_pipeline_saves_the_work(clock: Clock, tmp_pa
     status_only = frozenset(GROUPS["status"]) & frozenset(KINDS_BY_RESOURCE["mr"])
     poller = _poller(fake, clock, tmp_path, PollerOptions(status_only))
     asyncio.run(poller.poll())
-    sent = fake.calls[0].fields
-    assert sent["withThreads"] == "false" and sent["withPipeline"] == "false"
+    sent = fake.calls[0].variables
+    assert sent["withThreads"] is False and sent["withPipeline"] is False
     assert poller.children() == frozenset()
     assert len(fake.calls) == 1
 

@@ -9,9 +9,9 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import quote, urlencode
 
 from glab_cli_extras.gitlab.budget import NOT_MODIFIED_COST, HostBudget
@@ -20,12 +20,18 @@ from glab_cli_extras.gitlab.glab import (
     GlabRunner,
     HttpResponse,
     build_api_args,
+    error_message,
+    json_bytes,
     parse_include_output,
     run_glab,
     stderr_message,
 )
 
+if TYPE_CHECKING:
+    from glab_cli_extras.gitlab.retry import RetryPolicy
+
 MAX_CONCURRENT_REQUESTS = 4
+T = TypeVar("T")
 ETAG_RESOURCE_HEADER = "X-GITLAB-GRAPHQL-RESOURCE-ETAG"
 
 
@@ -82,18 +88,6 @@ def encode_project(project: str) -> str:
     return quote(project, safe="")
 
 
-def _error_message(response: HttpResponse) -> str:
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = None
-    if isinstance(payload, dict):
-        for key in ("message", "error", "error_description"):
-            if key in payload:
-                return str(payload[key])
-    return f"HTTP {response.status} {response.reason}".strip()
-
-
 class GitLabClient:
     def __init__(
         self,
@@ -103,23 +97,33 @@ class GitLabClient:
         budget: HostBudget | None = None,
         clock: Callable[[], float] = time.time,
         timeout: float = DEFAULT_TIMEOUT,
+        max_concurrency: int = MAX_CONCURRENT_REQUESTS,
+        retry_reads: RetryPolicy | None = None,
     ) -> None:
+        """`retry_reads` retries GETs and GraphQL queries, never a write: a write that timed out may still have been
+        applied by GitLab, and sending it again would post a comment or a review twice."""
         self.host = host
         self.budget = budget if budget is not None else HostBudget()
         self.stats = RequestStats()
         self._runner = runner
         self._clock = clock
         self._timeout = timeout
-        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._retry = retry_reads
         self._version: tuple[int, int] | None = None
         self._version_checked = False
 
-    async def _request(self, args: list[str], kind: str) -> HttpResponse:
+    async def _read(self, call: Callable[[], Awaitable[T]]) -> T:
+        if self._retry is None:
+            return await call()
+        return await self._retry.run(call)
+
+    async def _request(self, args: list[str], kind: str, stdin: bytes | None = None) -> HttpResponse:
         async with self._semaphore:
             self.stats.requests += 1
             self.stats.by_kind[kind] += 1
             try:
-                result = await self._runner(args, self._timeout)
+                result = await self._runner(args, self._timeout, stdin)
             except TimeoutError as exc:
                 self.stats.transport_errors += 1
                 self.budget.charge(1.0, self._clock())
@@ -143,24 +147,22 @@ class GitLabClient:
             self.budget.on_rate_limited(seconds, now)
             raise RateLimited(f"GitLab rate limit hit on {self.host}", seconds)
         if response.status == 404:
-            raise NotFound(_error_message(response), 404)
+            raise NotFound(error_message(response), 404)
         if response.status in (401, 403):
             raise Unauthorized(
-                f"{_error_message(response)} (HTTP {response.status}); check `glab auth status --hostname {self.host}`",
+                f"{error_message(response)} (HTTP {response.status}); check `glab auth status --hostname {self.host}`",
                 response.status,
             )
         if response.status >= 400:
-            raise ApiError(_error_message(response), response.status)
+            raise ApiError(error_message(response), response.status)
         self.budget.on_success()
         return response
 
     async def get(
         self, path: str, params: Mapping[str, str | int] | None = None, *, kind: str = "rest"
     ) -> HttpResponse:
-        endpoint = path
-        if params:
-            endpoint += ("&" if "?" in path else "?") + urlencode(list(params.items()), safe="[]")
-        return await self._request(build_api_args(self.host, endpoint), kind)
+        endpoint = _with_params(path, params)
+        return await self._read(lambda: self._request(build_api_args(self.host, endpoint), kind))
 
     async def get_json(self, path: str, params: Mapping[str, str | int] | None = None, *, kind: str = "rest") -> Any:
         response = await self.get(path, params, kind=kind)
@@ -169,10 +171,51 @@ class GitLabClient:
         except ValueError as exc:
             raise ApiError(f"GitLab returned invalid JSON for {path}: {exc}", response.status) from exc
 
+    async def get_pages(
+        self, path: str, params: Mapping[str, str | int] | None = None, *, kind: str = "rest", max_pages: int = 100
+    ) -> list[Any]:
+        """Every item of a paginated list, following GitLab's `X-Next-Page` header."""
+        items: list[Any] = []
+        page = 1
+        for _ in range(max_pages):
+            response = await self.get(path, {"per_page": 100, **(params or {}), "page": page}, kind=kind)
+            try:
+                batch = response.json()
+            except ValueError as exc:
+                raise ApiError(f"GitLab returned invalid JSON for {path}: {exc}", response.status) from exc
+            if not isinstance(batch, list):
+                raise ApiError(f"GitLab returned no list for {path}", response.status)
+            items.extend(batch)
+            next_page = (response.header("x-next-page") or "").strip()
+            if not next_page.isdigit():
+                break
+            page = int(next_page)
+        return items
+
+    async def request(self, method: str, path: str, *, json_body: Any = None, kind: str = "write") -> Any:
+        """A REST call with an optional JSON body. Only a GET is retried. Returns the parsed body, None when empty."""
+        args = build_api_args(self.host, path, method=method, json_body=json_body is not None)
+        stdin = json_bytes(json_body) if json_body is not None else None
+        if method.upper() == "GET":
+            response = await self._read(lambda: self._request(args, kind, stdin))
+        else:
+            response = await self._request(args, kind, stdin)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ApiError(f"GitLab returned invalid JSON for {path}: {exc}", response.status) from exc
+
+    async def graphql_mutation(self, query: str, variables: Mapping[str, Any], *, kind: str = "mutation") -> Any:
+        """Run a GraphQL mutation once, never retried. Top-level errors raise; the mutation's own `errors` field is
+        part of the returned `data`, for the caller to judge."""
+        args = build_api_args(self.host, "graphql", method="POST", json_body=True)
+        response = await self._request(args, kind, json_bytes({"query": query, "variables": dict(variables)}))
+        return _graphql_data(response)
+
     async def graphql(
         self,
         query: str,
-        variables: Mapping[str, str | int | bool],
+        variables: Mapping[str, Any],
         *,
         etag_resource: str | None = None,
         if_none_match: str | None = None,
@@ -188,26 +231,13 @@ class GitLabClient:
             headers[ETAG_RESOURCE_HEADER] = f"/api/graphql:{etag_resource}"
             if if_none_match:
                 headers["If-None-Match"] = if_none_match
-        strings = {k: v for k, v in variables.items() if isinstance(v, str)}
-        typed = {k: v for k, v in variables.items() if not isinstance(v, str)}
-        args = build_api_args(
-            self.host, "graphql", headers=headers, fields={"query": query, **strings}, typed_fields=typed
-        )
-        response = await self._request(args, kind + ("-etag" if etag_resource else ""))
+        args = build_api_args(self.host, "graphql", method="POST", headers=headers, json_body=True)
+        body = json_bytes({"query": query, "variables": dict(variables)})
+        response = await self._read(lambda: self._request(args, kind + ("-etag" if etag_resource else ""), body))
         etag = response.header("etag")
         if response.status == 304:
             return GraphQLResult(True, None, etag or if_none_match)
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise ApiError(f"GitLab returned invalid GraphQL JSON: {exc}", response.status) from exc
-        if not isinstance(payload, dict):
-            raise ApiError("GitLab returned an unexpected GraphQL response", response.status)
-        errors = payload.get("errors")
-        if errors:
-            messages = "; ".join(str(e.get("message", e)) if isinstance(e, dict) else str(e) for e in errors)
-            raise ApiError(f"GraphQL error: {messages}", response.status)
-        return GraphQLResult(False, payload.get("data"), etag)
+        return GraphQLResult(False, _graphql_data(response), etag)
 
     async def version(self) -> tuple[int, int] | None:
         """The GitLab version (major, minor), fetched once per client. None when the server does not tell."""
@@ -223,3 +253,23 @@ class GitLabClient:
         if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
             self._version = (int(parts[0]), int(parts[1]))
         return self._version
+
+
+def _with_params(path: str, params: Mapping[str, str | int] | None) -> str:
+    if not params:
+        return path
+    return path + ("&" if "?" in path else "?") + urlencode(list(params.items()), safe="[]")
+
+
+def _graphql_data(response: HttpResponse) -> Any:
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ApiError(f"GitLab returned invalid GraphQL JSON: {exc}", response.status) from exc
+    if not isinstance(payload, dict):
+        raise ApiError("GitLab returned an unexpected GraphQL response", response.status)
+    errors = payload.get("errors")
+    if errors:
+        messages = "; ".join(str(e.get("message", e)) if isinstance(e, dict) else str(e) for e in errors)
+        raise ApiError(f"GraphQL error: {messages}", response.status)
+    return payload.get("data")
