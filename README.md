@@ -53,7 +53,7 @@ All commands:
 - `--message-priority=now|next|later`: for `claude-message` only. The default is `next`.
 - `--no-daemon`: poll inside this process, with a private budget, without the shared daemon.
 
-`mr` and `pipeline` also take `--logs=failed|all|none`: which finished jobs get their log downloaded. The default is `failed`.
+`pipeline` also takes `--logs=failed|all|none`: which finished jobs get their log downloaded. The default is `failed`.
 
 The filter is checked at start. An unknown kind or group, or one the resource never produces, is an error, so a typo does not silently mean "no events". The filter also saves API work: an MR watch without `comments` never fetches threads, and one without `pipeline` never polls the head pipeline or downloads job logs.
 
@@ -107,7 +107,7 @@ Lifecycle events come with every resource and cannot be filtered out:
 - `pushed`: `from`, `to`, `forced`. A force-push is detected with one `merge_base` request per push.
 - `merge_status_changed`: GitLab's transient `checking`, `unchecked` and `preparing` are skipped.
 - `approvals_changed`, `reviewers_changed`
-- `head_pipeline_changed`, plus every `pipeline` event of the head pipeline, with `pipeline_id` in `data`
+- `head_pipeline_changed`, `pipeline_status_changed` (`from`, `to`) and `pipeline_finished` (with `failed_jobs` when it failed) for the head pipeline. These are pipeline-level only: an MR watch reports no job events and downloads no logs. Each one has the pipeline's `web_url` and `watch_command`, the `glab-watch pipeline <url>` command that watches it job by job. The head pipeline's status comes with the MR's own snapshot query, so it costs no extra request.
 - `thread_created`, `thread_updated`, `thread_resolved`, `thread_unresolved`, each with the thread's file in `artifacts`. GitLab can show a thread unresolved for a poll or two after a force-push; a `thread_unresolved` within two polls of a `pushed` has `after_push: true`.
 
 One `glab-discussion drafts publish` changes the MR in up to three ways at once: a review state, `reviewers_changed` when it added you as a reviewer, and `approvals_changed` when it revoked your approval. A watcher of your own MR sees these as events like any other.
@@ -125,7 +125,7 @@ Groups for `--events` and `--exclude-events`:
 | `status` | `state_changed`, `draft_changed`, `merge_status_changed`, `approvals_changed`, `reviewers_changed`, `title_changed`, `description_changed`, and all `mr_*` |
 | `comments` | `thread_*` |
 | `push` | `pushed`, `force_pushed`, `created`, `deleted` |
-| `pipeline` | `head_pipeline_changed`, `status_changed`, `job_*`, `downstream_created`, `finished`, `pipeline_created`, `pipeline_finished` |
+| `pipeline` | `head_pipeline_changed`, `pipeline_status_changed`, `status_changed`, `job_*`, `downstream_created`, `finished`, `pipeline_created`, `pipeline_finished` |
 | `lifecycle` | `watch_started`, `watch_degraded`, `watch_ended`; always on |
 
 ### Files
@@ -159,7 +159,7 @@ With the default `--events-stream=auto`, a watcher that runs under a Claude Code
 
 ```text
 <glab-cli-extras-watcher resource="mr gitlab.example.com/group/project!123" seq="18-19" changelog="/tmp/claude-1000/…/scratchpad/glab-cli-extras/gitlab.example.com/group/project/-/merge_requests/123/events.jsonl">
-{"kind":"head_pipeline_changed","seq":18,"data":{"pipeline_id":456,"status":"running","previous_pipeline_id":455}}
+{"kind":"head_pipeline_changed","seq":18,"data":{"pipeline_id":456,"web_url":"https://gitlab.example.com/group/project/-/pipelines/456","watch_command":"glab-watch pipeline https://gitlab.example.com/group/project/-/pipelines/456","status":"running","previous_pipeline_id":455}}
 {"kind":"thread_created","seq":19,"data":{"discussion_id":"6a1f…","author":"reviewer-one","resolvable":true,"resolved":false,"notes":1},"artifacts":["/tmp/claude-1000/…/scratchpad/glab-cli-extras/…/merge_requests/123/threads/2026-11-09T09-30-reviewer-one-6a1f….txt"]}
 </glab-cli-extras-watcher>
 ```
@@ -188,9 +188,8 @@ glab-watch: state: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/
 glab-watch: changelog: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/events.jsonl
 glab-watch: events: state_changed,draft_changed,pushed,… (always: watch_started,watch_degraded,watch_ended)
 glab-watch: ignored: thread_created,thread_updated,thread_resolved,thread_unresolved
-glab-watch: logs: failed
 glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-v3.sock, log /run/user/1000/glab-cli-extras/daemon-v3.log
-glab-watch: restart with: glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123 --events=<kinds|groups> --exclude-events=<kinds|groups> --logs=failed|all|none (groups: status, comments, push, pipeline)
+glab-watch: restart with: glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123 --events=<kinds|groups> --exclude-events=<kinds|groups> (groups: status, comments, push, pipeline)
 ```
 
 The header and the other status lines (`ended: …`, errors) always go to stderr, so stdout carries only events. Claude Code puts a background task's stderr into the task output next to its stdout, so an agent sees both. A status line never starts with `{`: in merged output, every line that starts with `{` is an event.

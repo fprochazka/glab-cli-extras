@@ -3,7 +3,8 @@
 - A moved `diffHeadSha` is a push. One `merge_base` request tells a fast-forward from a force-push.
 - A thread whose notes changed (`updatedAt` moves on edit, resolve and unresolve) is re-fetched alone into the engine's
   cache, for the clients to write. Many changed threads at once are fetched with one list request instead.
-- The head pipeline is a separate, shared `pipeline` resource; the daemon relays its events into the MR's stream.
+- The head pipeline is reported at the level of the pipeline only, from the same snapshot: its id and status cost no
+  extra request. Job-level detail is what `glab-watch pipeline` is for, and every pipeline event names that command.
 
 The MR's own `updated_at` is not used: GitLab skips touching it within a minute of the last touch, and head pipeline
 changes and single resolves never touch it.
@@ -16,9 +17,9 @@ import logging
 from dataclasses import replace
 from typing import Any, ClassVar
 
-from glab_cli_extras.events import GROUPS, PIPELINE_KINDS, RawEvent
+from glab_cli_extras.events import GROUPS, MR_PIPELINE_KINDS, RawEvent
 from glab_cli_extras.gitlab.refs import ResourceRef
-from glab_cli_extras.resources.base import PollContext, Poller, PollerOptions, is_force_push
+from glab_cli_extras.resources.base import PollContext, Poller, is_force_push
 from glab_cli_extras.sync.mr import (
     MrSnapshot,
     NoteState,
@@ -29,6 +30,7 @@ from glab_cli_extras.sync.mr import (
     parse_threads,
     thread_sig,
 )
+from glab_cli_extras.sync.pipeline import FINAL_PIPELINE_STATUSES
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +107,46 @@ def diff_threads(prev: tuple[ThreadState, ...], cur: tuple[ThreadState, ...]) ->
     return events
 
 
+def pipeline_watch_command(snap: MrSnapshot, host: str) -> str | None:
+    """The command that watches the head pipeline job by job, for an agent that wants more than its status."""
+    if snap.head_pipeline_id is None:
+        return None
+    url = (
+        snap.head_pipeline_web_url or f"https://{host}/{snap.head_pipeline_project}/-/pipelines/{snap.head_pipeline_id}"
+    )
+    return f"glab-watch pipeline {url}"
+
+
+def _pipeline_data(snap: MrSnapshot) -> dict[str, Any]:
+    data: dict[str, Any] = {"pipeline_id": snap.head_pipeline_id, "web_url": snap.head_pipeline_web_url}
+    host = (snap.web_url or "").split("://", 1)[-1].split("/", 1)[0]
+    data["watch_command"] = pipeline_watch_command(snap, host)
+    return data
+
+
+def diff_head_pipeline(prev: MrSnapshot, cur: MrSnapshot) -> list[RawEvent]:
+    """The head pipeline at the level of the pipeline, never of its jobs: a new head pipeline, its status changes,
+    and its end. Each event names the `glab-watch pipeline` command for the job-level detail."""
+    if cur.head_pipeline_id is None:
+        return []
+    events: list[RawEvent] = []
+    status = cur.head_pipeline_status
+    changed = prev.head_pipeline_id != cur.head_pipeline_id
+    if changed:
+        data = {**_pipeline_data(cur), "status": status, "previous_pipeline_id": prev.head_pipeline_id}
+        events.append(RawEvent("head_pipeline_changed", data))
+    elif prev.head_pipeline_status != status:
+        data = {**_pipeline_data(cur), "from": prev.head_pipeline_status, "to": status}
+        events.append(RawEvent("pipeline_status_changed", data))
+    was_final = not changed and prev.head_pipeline_status in FINAL_PIPELINE_STATUSES
+    if status in FINAL_PIPELINE_STATUSES and not was_final:
+        data = {**_pipeline_data(cur), "status": status}
+        if status == "failed" and cur.head_pipeline_failed_jobs:
+            data["failed_jobs"] = list(cur.head_pipeline_failed_jobs)
+        events.append(RawEvent("pipeline_finished", data))
+    return events
+
+
 def diff_mr(prev: MrSnapshot, cur: MrSnapshot) -> list[RawEvent]:
     """Events between two settled snapshots of one MR, in a stable order."""
     events: list[RawEvent] = []
@@ -148,17 +190,7 @@ def diff_mr(prev: MrSnapshot, cur: MrSnapshot) -> list[RawEvent]:
         events.append(
             RawEvent("reviewers_changed", {"reviewers": list(cur.reviewers), "added": added, "removed": removed})
         )
-    if prev.head_pipeline_id != cur.head_pipeline_id and cur.head_pipeline_id is not None:
-        events.append(
-            RawEvent(
-                "head_pipeline_changed",
-                {
-                    "pipeline_id": cur.head_pipeline_id,
-                    "status": cur.head_pipeline_status,
-                    "previous_pipeline_id": prev.head_pipeline_id,
-                },
-            )
-        )
+    events.extend(diff_head_pipeline(prev, cur))
     if prev.threads is not None and cur.threads is not None:
         events.extend(diff_threads(prev.threads, cur.threads))
     return events
@@ -211,7 +243,7 @@ class MrPoller(Poller[MrSnapshot]):
 
     @property
     def _wants_pipeline(self) -> bool:
-        return self.options.wants("head_pipeline_changed", *PIPELINE_KINDS)
+        return self.options.wants("head_pipeline_changed", *MR_PIPELINE_KINDS)
 
     async def _fetch_snapshot(self) -> MrSnapshot:
         return await fetch_snapshot(
@@ -296,25 +328,18 @@ class MrPoller(Poller[MrSnapshot]):
             "reviewers": list(snap.reviewers),
         }
         if snap.head_pipeline_id is not None:
-            summary["head_pipeline"] = {"id": snap.head_pipeline_id, "status": snap.head_pipeline_status}
+            summary["head_pipeline"] = {
+                "id": snap.head_pipeline_id,
+                "status": snap.head_pipeline_status,
+                "web_url": snap.head_pipeline_web_url,
+                "watch_command": pipeline_watch_command(snap, self.ref.host),
+            }
         if snap.threads is not None:
             summary["threads"] = {
                 "total": len(snap.threads),
                 "unresolved": sum(1 for t in snap.threads if t.resolvable and not t.resolved),
             }
         return summary
-
-    def children(self) -> frozenset[ResourceRef]:
-        snap = self.snapshot
-        if snap is None or snap.head_pipeline_id is None or self.terminal:
-            return frozenset()
-        if not self.options.wants(*PIPELINE_KINDS):
-            return frozenset()
-        project = snap.head_pipeline_project or self.ref.project
-        return frozenset({ResourceRef("pipeline", self.ref.host, project, snap.head_pipeline_id)})
-
-    def child_options(self, child: ResourceRef) -> PollerOptions | None:
-        return PollerOptions(self.options.events & frozenset(PIPELINE_KINDS), self.options.logs)
 
 
 __all__ = ["MrPoller", "MrSnapshot", "NoteState", "ThreadState", "diff_mr", "parse_mr", "parse_threads", "settle"]

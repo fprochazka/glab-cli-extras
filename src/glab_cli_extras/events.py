@@ -38,9 +38,13 @@ BRANCH_KINDS: tuple[str, ...] = (
     "pipeline_finished",
 )
 
+MR_PIPELINE_KINDS: tuple[str, ...] = ("pipeline_status_changed", "pipeline_finished")
+"""What an MR watch reports about its head pipeline, besides `head_pipeline_changed`. Job-level detail needs a
+pipeline watch, whose command every one of these events carries."""
+
 KINDS_BY_RESOURCE: Mapping[str, tuple[str, ...]] = {
     "pipeline": PIPELINE_KINDS,
-    "mr": MR_OWN_KINDS + PIPELINE_KINDS,
+    "mr": MR_OWN_KINDS + MR_PIPELINE_KINDS,
     "mrs": MRS_KINDS,
     "branch": BRANCH_KINDS,
 }
@@ -61,6 +65,7 @@ GROUPS: Mapping[str, tuple[str, ...]] = {
     "pipeline": (
         "head_pipeline_changed",
         *PIPELINE_KINDS,
+        "pipeline_status_changed",
         "pipeline_created",
         "pipeline_finished",
     ),

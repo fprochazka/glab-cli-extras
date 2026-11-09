@@ -59,7 +59,14 @@ def test_diff_covers_the_status_fields_in_order() -> None:
     assert events[0].data == {"from": "closed", "to": "opened", "reopened": True}
     assert events[6].data["added"] == ["reviewer-one"] and events[6].data["approvals_left"] == 0
     assert events[7].data["added"] == ["reviewer-two"]
-    assert events[8].data == {"pipeline_id": 5002, "status": "running", "previous_pipeline_id": 5001}
+    url = f"https://{HOST}/{PROJECT}/-/pipelines/5002"
+    assert events[8].data == {
+        "pipeline_id": 5002,
+        "web_url": url,
+        "watch_command": f"glab-watch pipeline {url}",
+        "status": "running",
+        "previous_pipeline_id": 5001,
+    }
 
 
 def test_transient_merge_status_keeps_the_settled_value() -> None:
@@ -125,7 +132,7 @@ def test_poller_fetches_only_the_threads_that_changed_into_the_cache(clock: Cloc
     assert asyncio.run(poller.poll()) == []
     assert fake.endpoints() == ["graphql"]
     assert poller.summary()["threads"]["unresolved"] == 1
-    assert poller.children() == frozenset({ResourceRef("pipeline", HOST, PROJECT, 5001)})
+    assert poller.children() == frozenset()
 
     thread_b = gql_thread("bbb222", [(7, "2026-11-09T10:00:00Z", "reviewer-two")])
     fake.routes[0] = Route("MergeRequestSnapshot", {"data": gql_mr(threads=[thread_a, thread_b], head_sha=SHA2)})
@@ -226,3 +233,25 @@ def test_an_unresolve_right_after_a_push_is_marked(clock: Clock, tmp_path: Path)
     fake.routes[0] = Route("MergeRequestSnapshot", {"data": gql_mr(threads=[unresolved], head_sha=SHA2)})
     later = next(e for e in asyncio.run(poller.poll()) if e.kind == "thread_unresolved")
     assert "after_push" not in later.data
+
+
+def test_the_head_pipeline_is_reported_by_status_never_by_job() -> None:
+    running = snap(pipeline_id=5001, pipeline_status="RUNNING")
+    failed = snap(pipeline_id=5001, pipeline_status="FAILED", failed_jobs=["unit tests", "lint"])
+    url = f"https://{HOST}/{PROJECT}/-/pipelines/5001"
+    command = f"glab-watch pipeline {url}"
+    events = diff_mr(running, failed)
+    assert kinds(events) == ["pipeline_status_changed", "pipeline_finished"]
+    assert events[0].data == {
+        "pipeline_id": 5001,
+        "web_url": url,
+        "watch_command": command,
+        "from": "running",
+        "to": "failed",
+    }
+    assert events[1].data["failed_jobs"] == ["lint", "unit tests"] and events[1].data["watch_command"] == command
+    # A status change that does not end the pipeline is exactly one event.
+    pending = snap(pipeline_id=5001, pipeline_status="PENDING")
+    assert kinds(diff_mr(pending, running)) == ["pipeline_status_changed"]
+    # No job event kind is ever produced for an MR.
+    assert not {"job_started", "job_finished", "downstream_created"} & set(KINDS_BY_RESOURCE["mr"])

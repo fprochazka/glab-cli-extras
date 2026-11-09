@@ -56,6 +56,9 @@ class MrSnapshot:
     head_pipeline_id: int | None = None
     head_pipeline_status: str | None = None
     head_pipeline_project: str | None = None
+    head_pipeline_web_url: str | None = None
+    head_pipeline_failed_jobs: tuple[str, ...] = ()
+    """The names of the head pipeline's failed jobs that may not fail; free in the same query."""
     threads: tuple[ThreadState, ...] | None = None
     """None when no subscriber wants comment events, so the query leaves discussions out."""
 
@@ -121,8 +124,26 @@ def parse_mr(node: Any, project: str, threads: tuple[ThreadState, ...] | None) -
         head_pipeline_id=gid_to_int(pipeline["id"]) if pipeline else None,
         head_pipeline_status=lower(pipeline.get("status")) if pipeline else None,
         head_pipeline_project=((pipeline.get("project") or {}).get("fullPath") or project) if pipeline else None,
+        head_pipeline_web_url=_web_url(node.get("webUrl"), pipeline.get("path")) if pipeline else None,
+        head_pipeline_failed_jobs=tuple(
+            sorted(
+                str(j.get("name"))
+                for j in ((pipeline.get("jobs") or {}).get("nodes") or [])
+                if isinstance(j, dict) and not j.get("allowFailure")
+            )
+        )
+        if pipeline
+        else (),
         threads=threads,
     )
+
+
+def _web_url(mr_url: Any, path: Any) -> str | None:
+    """The pipeline's URL from its path, on the host of the MR's URL."""
+    if not isinstance(mr_url, str) or not isinstance(path, str) or "://" not in mr_url:
+        return None
+    scheme, rest = mr_url.split("://", 1)
+    return f"{scheme}://{rest.split('/', 1)[0]}{path}"
 
 
 def snapshot_users(snapshot: MrSnapshot) -> dict[str, UserInfo]:

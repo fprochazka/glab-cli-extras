@@ -24,7 +24,7 @@ def test_groups_expand_to_kinds_the_resource_produces() -> None:
 
 def test_exclude_removes_a_group() -> None:
     selected = resolve_filter("mr", None, ["comments", "pipeline"])
-    assert not {"thread_created", "head_pipeline_changed", "job_finished"} & selected
+    assert not {"thread_created", "head_pipeline_changed", "pipeline_finished"} & selected
     assert "pushed" in selected
 
 

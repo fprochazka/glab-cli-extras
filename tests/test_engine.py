@@ -83,31 +83,23 @@ def test_late_subscriber_gets_watch_started_and_no_backlog(clock: Clock, tmp_pat
     asyncio.run(scenario())
 
 
-def test_mr_relays_its_head_pipeline_events(clock: Clock, tmp_path: Path) -> None:
-    fake = FakeGlab(
-        [
-            Route("MergeRequestSnapshot", {"data": gql_mr(threads=[], pipeline_id=5001)}),
-            Route("merge_requests/42/discussions", []),
-            pipeline_route("running", gql_job(1, "test", "running")),
-        ]
-    )
+def test_an_mr_watch_reports_its_head_pipeline_from_the_mr_snapshot_alone(clock: Clock, tmp_path: Path) -> None:
+    fake = FakeGlab([Route("MergeRequestSnapshot", {"data": gql_mr(threads=[], pipeline_id=5001)})])
     engine = make_engine(fake, clock, tmp_path)
 
     async def scenario() -> None:
         sub = engine.subscribe("client-a", MR, ALL_MR, "none")
         await engine.poll_due_once()
-        assert PIPELINE.key in engine.resources
-        assert engine.resources[PIPELINE.key].parents == {MR.key}
+        fake.routes[0] = Route(
+            "MergeRequestSnapshot", {"data": gql_mr(threads=[], pipeline_id=5001, pipeline_status="FAILED")}
+        )
+        clock.advance(16)
         await engine.poll_due_once()
-        fake.routes[2] = pipeline_route("running", gql_job(1, "test", "failed"), etag='W/"2"')
-        clock.advance(5)
-        await engine.poll_due_once()
+        assert list(engine.resources) == [MR.key]
         response = engine.poll("client-a", {sub["subscription_id"]: 0})
-        events = events_of(response, sub["subscription_id"])
-        assert [e["kind"] for e in events] == ["watch_started", "job_finished"]
-        assert events[1]["resource"] == MR.key and events[1]["data"]["pipeline_id"] == 5001
-        engine.unsubscribe("client-a", sub["subscription_id"])
-        assert engine.resources == {}
+        kinds = [e["kind"] for e in events_of(response, sub["subscription_id"])]
+        assert kinds == ["watch_started", "pipeline_status_changed", "pipeline_finished"]
+        assert all(call.endpoint == "graphql" for call in fake.calls)
 
     asyncio.run(scenario())
 

@@ -24,7 +24,9 @@ query MergeRequestSnapshot(
       headPipeline @include(if: $withPipeline) {
         id
         status
+        path
         project { fullPath }
+        jobs(statuses: [FAILED], retried: false) { nodes { name allowFailure } }
       }
       discussions(first: 100, after: $threadsAfter) @include(if: $withThreads) {
         pageInfo { hasNextPage endCursor }

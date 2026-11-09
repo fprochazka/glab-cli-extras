@@ -251,7 +251,6 @@ def mr(
     ref: Annotated[str, typer.Argument(help="group/project!123, !123, 123 (repo from the cwd), or the MR URL.")],
     events: EventsOpt = None,
     exclude_events: ExcludeOpt = None,
-    logs: LogsOpt = "failed",
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
     events_stream: StreamOpt = "auto",
@@ -259,7 +258,8 @@ def mr(
     message_priority: PriorityOpt = "next",
     no_daemon: NoDaemonOpt = False,
 ) -> None:
-    """Watch one merge request: state, pushes, approvals, threads, and its head pipeline. Ends when merged or closed."""
+    """Watch one merge request: state, pushes, approvals, threads, and its head pipeline's status. Ends when merged or
+    closed. For the head pipeline's jobs, watch the pipeline: each pipeline event names the command."""
     run_watch(
         lambda: parse_id_ref("mr", ref),
         "mr",
@@ -271,7 +271,7 @@ def mr(
         timeout=timeout,
         no_daemon=no_daemon,
         message_priority=message_priority,
-        logs=logs,
+        logs=None,
     )
 
 
