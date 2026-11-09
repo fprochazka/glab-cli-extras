@@ -34,6 +34,11 @@ class DaemonUnavailable(ConnectionError):
     """No daemon answers on the endpoint."""
 
 
+class DaemonMismatch(RuntimeError):
+    """The daemon does not know a request: it runs other code than the client under the same protocol version, as
+    with an editable install whose daemon was started before the code changed."""
+
+
 def use_tcp() -> bool:
     return os.name == "nt" or os.environ.get(TRANSPORT_ENV) == "tcp" or not hasattr(socket, "AF_UNIX")
 

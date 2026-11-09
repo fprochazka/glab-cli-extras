@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from glab_cli_extras.daemon.transport import DaemonFiles, DaemonMismatch
 from glab_cli_extras.events import Event
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.serde import to_jsonable
@@ -14,6 +17,8 @@ from glab_cli_extras.store.job_logs import PLACEHOLDER_MARKER
 from glab_cli_extras.sync.job_logs import LogContent
 from glab_cli_extras.sync.mr import parse_mr, parse_threads
 from glab_cli_extras.sync.pipeline import parse_pipeline
+from glab_cli_extras.watch import client
+from glab_cli_extras.watch.client import BackendError, DaemonBackend
 from glab_cli_extras.watch.sinks import StatusOutput
 from glab_cli_extras.watch.writer import ResourceWriter
 from shapes import HOST, PROJECT, gql_job, gql_mr, gql_pipeline, gql_thread, rest_discussion
@@ -179,3 +184,42 @@ def test_every_job_gets_a_placeholder_until_its_log_arrives(tmp_path: Path) -> N
     # Later snapshots never put a placeholder over a real log.
     w.snapshot(pipeline_snapshot(gql_job(1, "build", "success"), gql_job(2, "unit", "failed"), status="failed"))
     assert not (logs / "test-unit-2.log").read_text().startswith(PLACEHOLDER_MARKER)
+
+
+class OlderDaemon(FakeBackend):
+    """A daemon started from older code under the same protocol version: it does not know the newer requests."""
+
+    def fetch_job_log(self, host: str, project: str, job_id: int) -> LogContent:
+        raise DaemonMismatch("the daemon answered unknown op 'fetch_job_log'")
+
+    def fetch_dump(self, ref: ResourceRef) -> dict[str, Any]:
+        raise DaemonMismatch("the daemon answered unknown op 'fetch_dump'")
+
+
+def test_a_daemon_that_does_not_know_a_request_is_reported_once_as_watch_degraded(tmp_path: Path) -> None:
+    w = writer(tmp_path, OlderDaemon(), PIPELINE)
+    failed = event("job_finished", job_id=901, pipeline_id=5001, stage="test", name="unit", status="failed")
+    finished = event("finished", pipeline_id=5001, status="failed")
+    out = w.attach([failed, finished])
+    assert [e.kind for e in out] == ["job_finished", "finished", "watch_degraded"]
+    assert out[2].data["reason"] == "daemon_mismatch" and "fetch_job_log" in out[2].data["message"]
+    assert "log_error" not in out[0].data and "dump_error" not in out[1].data
+    # Reported once: the next events that need the daemon fail the same way, silently.
+    assert [e.kind for e in w.attach([failed])] == ["job_finished"]
+
+
+def test_the_daemon_backend_turns_an_unknown_op_into_a_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = DaemonBackend.__new__(DaemonBackend)
+    backend.files, backend.hello, backend._shutting_down = (
+        DaemonFiles(Path("unused")),
+        {"pid": 7, "version": "0.1.0"},
+        False,
+    )
+    monkeypatch.setattr(
+        client, "request", lambda files, payload, timeout: {"ok": False, "error": "unknown op 'fetch_dump'"}
+    )
+    with pytest.raises(DaemonMismatch, match=r"pid 7, glab-cli-extras 0\.1\.0.*glab-watch daemon stop"):
+        backend.fetch_dump(PIPELINE)
+    monkeypatch.setattr(client, "request", lambda files, payload, timeout: {"ok": False, "error": "lease expired"})
+    with pytest.raises(BackendError, match="lease expired"):
+        backend.fetch_dump(PIPELINE)

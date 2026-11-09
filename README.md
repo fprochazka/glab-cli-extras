@@ -98,7 +98,7 @@ Every event has `kind`, `resource`, `seq`, `observed_at` and `data`, and `artifa
 Lifecycle events come with every resource and cannot be filtered out:
 
 - `watch_started`: the current state, in `data.summary`.
-- `watch_degraded`: polling has trouble: `rate_limited`, `auth`, `not_found` or `error`, with a message. It is sent once per kind of trouble, not on every failed poll.
+- `watch_degraded`: polling has trouble: `rate_limited`, `auth`, `not_found` or `error`, with a message. It is sent once per kind of trouble, not on every failed poll. The reason `daemon_mismatch` means the running daemon does not know a request this `glab-watch` sends, because it was started from other code of the same protocol version (an editable install that changed since). The watch keeps reporting events, but the files that need the daemon (job logs, thread files, the pipeline dump) stay out of date until you run `glab-watch daemon stop`; the running watchers then start a current daemon and subscribe again.
 - `watch_ended`: with a `reason`: `merged`, `closed`, `finished`, `not_found`, `until`, `timeout`, `session_gone`, or the signal.
 
 `mr`:

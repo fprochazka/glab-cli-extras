@@ -22,7 +22,7 @@ from typing import Any, Protocol, TypeVar
 from glab_cli_extras.daemon.engine import Engine
 from glab_cli_extras.daemon.lifecycle import ensure_daemon
 from glab_cli_extras.daemon.server import decode_log
-from glab_cli_extras.daemon.transport import DaemonFiles, DaemonUnavailable, request
+from glab_cli_extras.daemon.transport import DaemonFiles, DaemonMismatch, DaemonUnavailable, request
 from glab_cli_extras.events import WATCH_ENDED, WATCH_STARTED, Event, utc_now_iso
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.sync.job_logs import LogContent, LogsMode
@@ -101,7 +101,14 @@ class DaemonBackend:
             self.hello = ensure_daemon(self.files)
             response = request(self.files, payload, timeout=timeout)
         if not response.get("ok"):
-            raise BackendError(str(response.get("error", "the daemon refused the request")))
+            error = str(response.get("error", "the daemon refused the request"))
+            if error.startswith("unknown op"):
+                raise DaemonMismatch(
+                    f"the daemon (pid {self.hello.get('pid')}, glab-cli-extras {self.hello.get('version')}) answered"
+                    f" {error}: it runs other code than this glab-watch. Run `glab-watch daemon stop`; the running"
+                    " watchers then start a current daemon and subscribe again"
+                )
+            raise BackendError(error)
         return response
 
     def subscribe(
@@ -358,7 +365,7 @@ class Watcher:
                 if flush_in is not None:
                     wait = min(wait, flush_in)
                 self._wakeup.wait(wait)
-        except (BackendError, DaemonUnavailable) as exc:
+        except (BackendError, DaemonMismatch, DaemonUnavailable) as exc:
             if self._stop_reason is not None:
                 # Stopped while a request was in flight, and the daemon is gone: end like any other stop.
                 self._finish(self._end_event(self._stop_reason))

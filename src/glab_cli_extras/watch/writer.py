@@ -13,7 +13,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from glab_cli_extras.events import WATCH_ENDED, WATCH_STARTED, Event, utc_now_iso
+from glab_cli_extras.daemon.transport import DaemonMismatch
+from glab_cli_extras.events import WATCH_DEGRADED, WATCH_ENDED, WATCH_STARTED, Event, utc_now_iso
 from glab_cli_extras.gitlab.client import ApiError
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.paths import base_dir
@@ -51,8 +52,14 @@ class ResourceWriter:
         self._default_base = base == base_dir()
         self._mr: MrSnapshot | None = None
         self._pending_threads: set[str] = set()
+        self._mismatch: str | None = None
+        self._mismatch_reported = False
 
     def _fail(self, what: str, exc: BaseException) -> None:
+        if isinstance(exc, DaemonMismatch) and self._mismatch is None:
+            # Every later fetch fails the same way: one watch_degraded event says why, instead of an error field on
+            # each event that needed a file.
+            self._mismatch = str(exc)
         self.status.line(f"could not write {what}: {exc}")
 
     # ------------------------------------------------------------------------------------------------------------
@@ -192,6 +199,12 @@ class ResourceWriter:
             elif event.kind == WATCH_ENDED:
                 event = self._watch_ended(event)
             attached.append(event)
+        if self._mismatch is not None and not self._mismatch_reported:
+            self._mismatch_reported = True
+            data = {"reason": "daemon_mismatch", "message": self._mismatch}
+            degraded = Event(WATCH_DEGRADED, self.ref.key, 0, utc_now_iso(), data)
+            ended = [i for i, e in enumerate(attached) if e.kind == WATCH_ENDED]
+            attached.insert(ended[0] if ended else len(attached), degraded)
         return attached
 
     def _started(self, event: Event) -> Event:
@@ -221,6 +234,8 @@ class ResourceWriter:
             directory = self.write_finished_dump(project, pipeline_id, fetch_logs=False)
         except (LockTimeout, OSError, ApiError, RuntimeError, ValueError, KeyError) as exc:
             self._fail(f"the dump of pipeline {pipeline_id}", exc)
+            if isinstance(exc, DaemonMismatch):
+                return event
             return replace(event, data={**data, "dump_error": str(exc)})
         return replace(event, data={**data, "dir": str(directory)}, artifacts=(str(directory / "summary.txt"),))
 
@@ -299,5 +314,7 @@ class ResourceWriter:
                     save_state(directory, state)
         except (LockTimeout, OSError, ApiError, RuntimeError, ValueError) as exc:
             self._fail(f"the log of job {job_id}", exc)
+            if isinstance(exc, DaemonMismatch):
+                return event
             return replace(event, data={**data, "log_error": str(exc)})
         return replace(event, data={**data, "log_truncated": truncated}, artifacts=(str(path),))
