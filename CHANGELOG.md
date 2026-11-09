@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 (2026-11-09)
+
+Breaking changes:
+
+- Python 3.12 or later is required. bash-classify, which the new Claude Code hook uses as a library, requires it. Install with a newer Python: `uv tool install --python 3.12 glab-cli-extras`.
+
+Added:
+
+- `glab-mr-status`, which reads merge requests once and reports what changed since its last read: one `<ID>: <detail>` line per change, the threads and the head pipeline's dump, and a scorecard line. It replaces the `mr-state.py` script of the `glab` Claude Code plugin with the same output, change ids and exit codes, and keeps its baseline apart from a running watcher's. See [glab-mr-status](README.md#glab-mr-status).
+- `glab-watch mr --quiet-after=<duration>`, repeatable, reports `quiet` when the head pipeline succeeded on the current head and nothing else was reported for that long. `glab-watch mr` and `glab-watch pipeline --stuck-after=<duration>` report `pipeline_stuck` for a pipeline still running or pending that long. Both are computed from what the watcher already receives and cost no request.
+- `glab-watch --idle-after=<duration>` on every resource ends the watch with `watch_ended` reason `idle` when nothing was reported for that long.
+- `glab-cli-extras-cc-hook`, a Claude Code PreToolUse hook that denies inspecting pipelines with `glab ci view|get|trace` or the raw API, and reading or writing MR discussions with `glab api`, `glab mr view --comments` or `glab mr note`, and names the command and skill to use instead. It replaces the bash hooks of the glab-pipeline and glab-discussion plugins, with their rules and test cases. See [The Claude Code hook](README.md#the-claude-code-hook).
+- The repository is a Claude Code marketplace, `fprochazka-glab-cli-extras`, with the `glab` plugin: the `glab`, `glab-watch`, `glab-pipeline`, `glab-discussion` and `mr-status` skills, the `/glab:overview`, `/glab:comments` and `/glab:pipeline` commands, the Bash guard and a session check of the install. It carries the package's version, and replaces the `glab` plugin of claude-code-plugins and the glab-pipeline and glab-discussion plugins. See [Claude Code plugin](README.md#claude-code-plugin).
+- `glab-pipeline --version` and `glab-discussion --version` print `glab-cli-extras <version>`.
+
+Changed:
+
+- An MR watch reads the head pipeline's SHA with its snapshot, so `quiet` can tell a green pipeline on the current head from the one GitLab keeps after a push.
+- The header of a watch lists its thresholds on a `thresholds:` line, and `--idle-after` on the `ends:` line.
+
+Deprecated:
+
+- The standalone glab-pipeline and glab-discussion packages. When one of them is still installed next to glab-cli-extras, its command prints one line on stderr before it runs, for example `glab-pipeline: this package is deprecated; glab-cli-extras provides the same command. Run: uv tool uninstall glab-pipeline && uv tool install glab-cli-extras`. Stdout and the exit code stay the same.
+
 ## 0.2.0 (2026-11-09)
 
 Breaking changes for `glab-watch`, with what to do:

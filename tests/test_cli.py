@@ -61,7 +61,7 @@ def test_daemon_status_without_a_daemon() -> None:
 
 
 def test_version() -> None:
-    assert runner.invoke(app, ["--version"]).output.strip() == "glab-watch 0.2.0"
+    assert runner.invoke(app, ["--version"]).output.strip() == f"glab-watch {__version__}"
 
 
 @pytest.mark.parametrize("command", ["pipeline", "discussion"])
