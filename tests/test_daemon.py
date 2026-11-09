@@ -6,9 +6,11 @@ on PATH, and stops every daemon it started.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -260,3 +262,47 @@ def test_daemon_cli_status_and_stop(daemon_env: DaemonEnv) -> None:
     )
     assert stop.stdout.strip() == "daemon: stopped"
     assert not daemon_running(daemon_env.files)
+
+
+def _descendants(pid: int) -> list[int]:
+    rows = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True, check=True).stdout.splitlines()
+    pairs = [(int(a), int(b)) for a, b in (row.split() for row in rows if row.strip())]
+    found, todo = [], [pid]
+    while todo:
+        parent = todo.pop()
+        children = [child for child, ppid in pairs if ppid == parent]
+        found += children
+        todo += children
+    return found
+
+
+def _running_pipeline(daemon_env: DaemonEnv) -> None:
+    daemon_env.routes(
+        Route("PipelineTree", {"data": gql_pipeline(5001, "running", [gql_job(1, "t", "running")])}, etag='W/"1"')
+    )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process trees; Windows uses job objects")
+def test_killing_a_watchers_whole_process_tree_leaves_the_shared_daemon_running(daemon_env: DaemonEnv) -> None:
+    _running_pipeline(daemon_env)
+    common = ["pipeline", PIPELINE_URL, "--events-stream=stdout", "--logs=none"]
+    first = _watch([*common, "--changelog-dir", str(daemon_env.root / "c1")], daemon_env.env())
+    assert first.stdout is not None and json.loads(first.stdout.readline())["kind"] == "watch_started"
+    daemon_pid = daemon_request(daemon_env.files, {"op": "hello"})["pid"]
+    assert daemon_pid not in _descendants(first.pid)
+
+    second = _watch([*common, "--timeout=4s", "--changelog-dir", str(daemon_env.root / "c2")], daemon_env.env())
+    assert second.stdout is not None and json.loads(second.stdout.readline())["kind"] == "watch_started"
+
+    # What a tree kill does: SIGKILL the process and everything below it.
+    for pid in [first.pid, *_descendants(first.pid)]:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    first.wait(timeout=10)
+
+    rest, err = second.communicate(timeout=30)
+    assert second.returncode == 0, err
+    assert [json.loads(line)["data"]["reason"] for line in rest.splitlines()] == ["timeout"]
+    assert "daemon restarted" not in err
+    assert daemon_request(daemon_env.files, {"op": "hello"})["pid"] == daemon_pid
+    assert daemon_env.files.log.read_text().count("daemon 0.1.0 started") == 1

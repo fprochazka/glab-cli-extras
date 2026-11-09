@@ -3,6 +3,11 @@
 There is one daemon per user and wire-protocol version. It holds an exclusive lock on `daemon-v<N>.lock` for its
 whole life, and exits after `idle_timeout` seconds without subscriptions. Clients start it on demand; the spawn lock
 makes concurrent clients start one daemon, not one each.
+
+The daemon is shared by every watcher of the user, so it must not be a descendant of the watcher that started it:
+tools that stop a process together with its whole tree (Claude Code's task stop does) would take it down too. A new
+session is not enough, because the parent stays the same. On POSIX the spawned process therefore forks once more
+and exits as soon as the daemon is ready, so the daemon is reparented to init or the nearest subreaper.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from glab_cli_extras import __version__
@@ -41,7 +47,9 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-async def serve(files: DaemonFiles, engine: Engine, idle_timeout: float) -> None:
+async def serve(
+    files: DaemonFiles, engine: Engine, idle_timeout: float, on_ready: Callable[[], None] | None = None
+) -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     if os.name != "nt":
@@ -59,6 +67,8 @@ async def serve(files: DaemonFiles, engine: Engine, idle_timeout: float) -> None
         files.describe_endpoint(),
         idle_timeout,
     )
+    if on_ready is not None:
+        on_ready()
     engine_task = asyncio.create_task(engine.run(stop))
     try:
         while not stop.is_set():
@@ -77,8 +87,44 @@ async def serve(files: DaemonFiles, engine: Engine, idle_timeout: float) -> None
         log.info("daemon stopped")
 
 
-def run_daemon() -> int:
-    """The daemon process: take the lock or exit, then serve until idle or stopped."""
+def run_daemon(argv: Sequence[str] = ()) -> int:
+    """The daemon process. On POSIX it detaches first, unless `--foreground` is given (for debugging)."""
+    if os.name != "nt" and "--foreground" not in argv:
+        return _detach()
+    return _serve_daemon(None)
+
+
+def _detach() -> int:
+    """Fork the daemon off this launcher process, wait until it is ready or gave up, then let the launcher exit."""
+    read_end, write_end = os.pipe()
+    pid = os.fork()
+    if pid > 0:
+        os.close(write_end)
+        with os.fdopen(read_end, "rb") as ready:
+            # One byte once the daemon listens or knows another daemon holds the lock; EOF if it died first.
+            ready.read(1)
+        return 0
+    os.close(read_end)
+    code = 1
+    try:
+        code = _serve_daemon(write_end)
+    finally:
+        logging.shutdown()
+        # Never fall back into the launcher's code path, whatever happened above.
+        os._exit(code)
+
+
+def _serve_daemon(ready_fd: int | None) -> int:
+    """Take the lock or exit, then serve until idle or stopped. `ready_fd` gets one byte when the launcher may go."""
+
+    def notify() -> None:
+        nonlocal ready_fd
+        if ready_fd is not None:
+            with contextlib.suppress(OSError):
+                os.write(ready_fd, b"1")
+                os.close(ready_fd)
+            ready_fd = None
+
     files = DaemonFiles.default()
     ensure_private_dir(files.state_dir)
     logging.basicConfig(
@@ -87,17 +133,18 @@ def run_daemon() -> int:
         stream=sys.stderr,
     )
     lock = FileLock(files.lock)
-    if not lock.try_acquire():
-        log.info("another daemon holds %s, exiting", files.lock)
-        return 0
     try:
+        if not lock.try_acquire():
+            log.info("another daemon holds %s, exiting", files.lock)
+            return 0
         engine = Engine(
             cache_root=user_cache_dir(),
             lease_timeout=_env_float(LEASE_TIMEOUT_ENV, DEFAULT_LEASE_TIMEOUT),
             client_poll_ms=int(_env_float(CLIENT_POLL_MS_ENV, DEFAULT_CLIENT_POLL_MS)),
         )
-        asyncio.run(serve(files, engine, _env_float(IDLE_TIMEOUT_ENV, DEFAULT_IDLE_TIMEOUT)))
+        asyncio.run(serve(files, engine, _env_float(IDLE_TIMEOUT_ENV, DEFAULT_IDLE_TIMEOUT), notify))
     finally:
+        notify()
         lock.release()
     return 0
 
@@ -128,11 +175,17 @@ def spawn_daemon(files: DaemonFiles) -> subprocess.Popen[bytes]:
             "cwd": str(files.state_dir),
             "close_fds": True,
         }
+        command = [sys.executable, "-m", "glab_cli_extras.daemon"]
         if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            kwargs["start_new_session"] = True
-        return subprocess.Popen([sys.executable, "-m", "glab_cli_extras.daemon"], **kwargs)
+            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            try:
+                # Leave the caller's job object, so killing the caller's job does not kill the daemon. A job that
+                # forbids breakaway makes this fail; the daemon then shares the caller's fate.
+                return subprocess.Popen(command, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, **kwargs)
+            except OSError:
+                return subprocess.Popen(command, creationflags=flags, **kwargs)
+        # The launcher forks the daemon off and exits once it is ready; see the module docstring.
+        return subprocess.Popen(command, start_new_session=True, **kwargs)
 
 
 def ensure_daemon(files: DaemonFiles, timeout: float = SPAWN_TIMEOUT) -> dict[str, Any]:
