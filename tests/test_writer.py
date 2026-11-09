@@ -10,11 +10,13 @@ from typing import Any
 from glab_cli_extras.events import Event
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.serde import to_jsonable
+from glab_cli_extras.store.job_logs import PLACEHOLDER_MARKER
 from glab_cli_extras.sync.job_logs import LogContent
 from glab_cli_extras.sync.mr import parse_mr, parse_threads
+from glab_cli_extras.sync.pipeline import parse_pipeline
 from glab_cli_extras.watch.sinks import StatusOutput
 from glab_cli_extras.watch.writer import ResourceWriter
-from shapes import HOST, PROJECT, gql_mr, gql_thread, rest_discussion
+from shapes import HOST, PROJECT, gql_job, gql_mr, gql_pipeline, gql_thread, rest_discussion
 
 MR = ResourceRef("mr", HOST, PROJECT, 42)
 PIPELINE = ResourceRef("pipeline", HOST, PROJECT, 5001)
@@ -131,3 +133,49 @@ def test_job_finished_writes_the_log_into_the_jobs_pipeline_dir_once(tmp_path: P
     passed = Event("job_finished", PIPELINE.key, 4, "x", {**finished.data, "job_id": 10, "status": "success"})
     assert w.attach([passed])[0].artifacts == ()
     assert backend.log_requests == [9]
+
+
+def pipeline_snapshot(*jobs: dict[str, Any], status: str = "running") -> Any:
+    return to_jsonable(parse_pipeline(gql_pipeline(5001, status, list(jobs)), HOST, PROJECT))
+
+
+def test_every_job_gets_a_placeholder_until_its_log_arrives(tmp_path: Path) -> None:
+    backend = FakeBackend()
+    w = writer(tmp_path, backend, PIPELINE)
+    w.snapshot(
+        pipeline_snapshot(gql_job(1, "build", "success"), gql_job(2, "unit", "running"), gql_job(3, "e2e", "skipped"))
+    )
+    logs = tmp_path / HOST / "group" / "project" / "-" / "pipelines" / "5001" / "job-logs"
+    texts = {p.name: p.read_text() for p in logs.iterdir()}
+    assert set(texts) == {"test-build-1.log", "test-unit-2.log", "test-e2e-3.log"}
+    assert all(t.startswith(PLACEHOLDER_MARKER) for t in texts.values())
+    # The writer's base is not the default one, so the command names the dir too.
+    url = f"https://{HOST}/{PROJECT}/-/pipelines/5001"
+    command = f"glab-pipeline inspect --pipeline-url {url} --output-dir {logs.parent} --logs=all"
+    assert command in texts["test-build-1.log"] and "the job passed" in texts["test-build-1.log"]
+    assert "still running" in texts["test-unit-2.log"] and "skipped" in texts["test-e2e-3.log"]
+
+    # The running job fails: its placeholder says the log is coming, then job_finished replaces it with the log.
+    w.snapshot(
+        pipeline_snapshot(gql_job(1, "build", "success"), gql_job(2, "unit", "failed"), gql_job(3, "e2e", "skipped"))
+    )
+    assert "being downloaded" in (logs / "test-unit-2.log").read_text()
+    finished = Event(
+        "job_finished",
+        PIPELINE.key,
+        5,
+        "2026-11-09T10:00:00.000Z",
+        {"pipeline_id": 5001, "project": PROJECT, "job_id": 2, "name": "unit", "stage": "test", "status": "failed"},
+    )
+    [out] = w.attach([finished])
+    assert Path(out.artifacts[0]) == logs / "test-unit-2.log"
+    assert (logs / "test-unit-2.log").read_bytes().endswith(b"ERROR: tests failed\n")
+    state = json.loads((logs.parent / "state.json").read_text())
+    assert {k: v["log_state"] for k, v in state["logs"].items()} == {
+        "1": "placeholder",
+        "2": "downloaded",
+        "3": "placeholder",
+    }
+    # Later snapshots never put a placeholder over a real log.
+    w.snapshot(pipeline_snapshot(gql_job(1, "build", "success"), gql_job(2, "unit", "failed"), status="failed"))
+    assert not (logs / "test-unit-2.log").read_text().startswith(PLACEHOLDER_MARKER)

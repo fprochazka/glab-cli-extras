@@ -7,6 +7,7 @@ as JSON on stdin. The same retry rule applies: only GETs and GraphQL queries are
 
 from __future__ import annotations
 
+import contextlib
 import random
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -154,3 +155,44 @@ def glab_graphql_mutation(query: str, variables: Mapping[str, Any], *, hostname:
     """Run a GraphQL mutation once and return its `data`. Top-level `errors` raise; the mutation's own `errors`
     field stays in `data` for the caller to judge."""
     return _graphql(query, variables, hostname, retry=False)
+
+
+def glab_api_download(endpoint: str, dest: str, *, hostname: str, timeout: float = 180.0) -> None:
+    """GET a binary endpoint (an artifacts archive) straight into a file, without holding it in memory.
+
+    Uses `glab api` without `-i`, so stdout is the body only. Retried like any GET; a failed attempt's partial file is
+    removed before the next one.
+    """
+    import os
+    import subprocess
+
+    from glab_cli_extras.gitlab.glab import glab_executable
+
+    delay = BASE_DELAY
+    last = ""
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            with open(dest, "wb") as fh:
+                result = subprocess.run(
+                    [glab_executable(), "api", "--hostname", hostname, endpoint],
+                    stdin=subprocess.DEVNULL,
+                    stdout=fh,
+                    stderr=subprocess.PIPE,
+                    timeout=timeout,
+                    check=False,
+                )
+        except subprocess.TimeoutExpired:
+            last = f"timeout after {timeout:.0f}s"
+        else:
+            if result.returncode == 0:
+                return
+            last = (result.stderr or b"").decode(errors="replace").strip()
+        with contextlib.suppress(OSError):
+            os.unlink(dest)
+        if attempt < ATTEMPTS:
+            SLEEP(delay + random.uniform(0, delay / 2))
+            delay *= 2
+    status = None
+    if "404" in last or "not found" in last.lower():
+        status = 404
+    raise GlabApiError(f"glab api {endpoint} failed after {ATTEMPTS} attempts: {last}", stderr=last, status=status)

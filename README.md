@@ -1,6 +1,9 @@
 # glab-cli-extras
 
-Extra commands for the [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`). Version 0.1 has one command, `glab-watch`: it watches a merge request, a pipeline, all merge requests of a project, or a branch, and reports every change as one JSON event per line. It is built for coding agents that wait on CI and review, and it works just as well in a terminal or a script.
+Extra commands for the [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`), built for coding agents that wait on CI and review, and just as usable in a terminal or a script:
+
+- `glab-watch` watches a merge request, a pipeline, all merge requests of a project, or a branch, and reports every change as one JSON event per line.
+- `glab-pipeline inspect` dumps a pipeline's state and job logs and prints a problem-driven summary.
 
 Every GitLab request goes through `glab api`, so `glab` handles authentication, hosts, OAuth refresh, proxies and certificates. `glab-watch` never reads or stores a token. A shared per-user daemon does the polling, so ten watchers cost about as much API budget as one.
 
@@ -53,6 +56,34 @@ All commands:
 `mr` and `pipeline` also take `--logs=failed|all|none`: which finished jobs get their log downloaded. The default is `failed`.
 
 The filter is checked at start. An unknown kind or group, or one the resource never produces, is an error, so a typo does not silently mean "no events". The filter also saves API work: an MR watch without `comments` never fetches threads, and one without `pipeline` never polls the head pipeline or downloads job logs.
+
+## glab-pipeline
+
+```bash
+glab-pipeline inspect                              # the head pipeline of the current branch's MR
+glab-pipeline inspect --pipeline-url <url>         # an explicit pipeline
+glab-pipeline inspect --pipeline-id 1234567 --project group/project --hostname gitlab.example.com
+glab-pipeline inspect --mr-url <url>               # an MR's head pipeline; also --mr-iid with --project and --hostname
+glab-pipeline inspect --logs=all                   # every job's log, not only the failed jobs' logs
+glab-pipeline inspect --with-merged-ci-config      # two-step lint that resolves include: against the source branch
+glab-pipeline inspect --with-test-report           # the test report even without a failed test job
+glab-pipeline inspect --with-downstream-pipelines  # downstream detail for every bridge, not only failed ones
+glab-pipeline inspect --with-artefacts             # download and unpack each job's artifacts archive
+glab-pipeline inspect --json | jq                  # the summary as JSON instead of text
+glab-pipeline inspect --output-dir /path/to/dir    # write the dump there instead of the pipeline's dir
+glab-pipeline inspect --full                       # ignore what is on disk and fetch everything again
+```
+
+It is the command of the [glab-pipeline](https://github.com/fprochazka/glab-pipeline) package, with the same options and output. It writes the dump into the pipeline's dir (see [Files](#files)), the same dir `glab-watch` writes, and prints a problem-driven summary:
+
+- `pipeline.json`, `jobs.json` (retried jobs included) and `bridges.json` (when there are bridges): the GitLab API objects.
+- `job-logs/<stage>-<name>-<id>.log`: the log of every failed job, and a placeholder for every other job. `--logs=all` downloads every log.
+- `lint.json` and `merged.yml` when the pipeline has YAML errors, no jobs, or a job failed for a config reason; `test-report.json` when a test job failed; `downstream/<bridge>-<id>.json` for a failed bridge; `artifacts/<stage>-<name>-<id>/` with `--with-artefacts`.
+- `summary.json` and `summary.txt`: the summary, also printed on stdout.
+
+A rerun reuses what is on disk. The pipeline is probed through GitLab's GraphQL ETag cache with the ETag of the last dump; an unchanged pipeline answers with a 304 and the rerun makes no other request. A finished job's log is never downloaded twice.
+
+The context flags follow glab-pipeline: a URL, or `--pipeline-id`/`--mr-iid` with `--project` and `--hostname`, or nothing for the current branch's MR. A partial set, such as `--project` without `--hostname`, is an error instead of being silently ignored. `--pipeline-id` alone takes the project of the current branch's MR.
 
 ## Events
 
@@ -109,7 +140,7 @@ The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipel
 
 - `state.json`: the latest state of the pipeline or MR, written on every change.
 - `events.jsonl`: every event the watcher reported, and `baseline.json`, the last state this watcher saw.
-- `job-logs/<stage>-<name>-<job id>.log` in a pipeline's dir. A log is downloaded once, a few seconds after the job ends. On GitLab 19.0 and later a log above 500 KB is read as its last 500 KB only, and the file starts with a `[glab-cli-extras: last …]` line. The log of a downstream job goes to its own pipeline's dir.
+- `job-logs/<stage>-<name>-<job id>.log` in a pipeline's dir, one file for every job of a watched pipeline. A log is downloaded once, a few seconds after the job ends. A job whose log is not downloaded, because it passed and `--logs` is `failed`, or because it is still running, pending, skipped or manual, has a short placeholder in its place. The placeholder starts with `[glab-cli-extras: log not downloaded]`, says why, and gives the `glab-pipeline inspect … --logs=all` command that downloads it. `state.json` records `log_state` for each job: `downloaded`, `tail` or `placeholder`. On GitLab 19.0 and later a log above 500 KB is read as its last 500 KB only, and the file starts with a `[glab-cli-extras: last …]` line. The log of a downstream job goes to its own pipeline's dir.
 - `threads/<created>-<author>-<id>.txt` in an MR's dir, one file per discussion thread, in glab-discussion's format: a header with the full discussion id, the type, the file and line of a diff note, `Resolved:` on resolvable threads and the URL, then one `[<created>] @<username> (note:<id>):` block per note. Bot authors get a `bot-` file name prefix and a `[BOT]` tag, service accounts their display name. A file is rewritten only when the thread changed: a new reply, an edit, a resolve. `.meta.json` maps each discussion id to its file.
 
 The daemon writes no files. It fetches each log and each changed thread once, keeps it in memory for a while, and hands it to every watcher that asks, so ten watchers of one pipeline cost one download. The watchers write the files.

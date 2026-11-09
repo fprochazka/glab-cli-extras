@@ -13,6 +13,8 @@ from glab_cli_extras.gitlab.client import GitLabClient  # noqa: E402
 from glab_cli_extras.resources.base import PollContext  # noqa: E402
 from shapes import HOST  # noqa: E402
 
+pytest_plugins = ["pipeline_fixtures"]
+
 
 class Clock:
     def __init__(self, now: float = 1_794_220_000.0) -> None:

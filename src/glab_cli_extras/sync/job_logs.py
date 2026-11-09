@@ -56,9 +56,14 @@ def _trace_size(job: Any) -> int | None:
     return None
 
 
-async def fetch_log_content(client: GitLabClient, project: str, job_id: int, known_size: int | None) -> LogContent:
-    """The job's log, or its last 500 KB when it is larger and GitLab can serve a tail."""
+async def fetch_log_content(
+    client: GitLabClient, project: str, job_id: int, known_size: int | None, *, tail: bool = True
+) -> LogContent:
+    """The job's log. With `tail`, only its last 500 KB when it is larger and GitLab can serve a tail."""
     encoded = encode_project(project)
+    if not tail:
+        response = await client.get(f"projects/{encoded}/jobs/{job_id}/trace", kind="trace")
+        return LogContent(response.body, False, len(response.body))
     version = await client.version()
     tail_supported = version is not None and version >= BYTE_OFFSET_MIN_VERSION
     size = known_size

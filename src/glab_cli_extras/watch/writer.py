@@ -8,6 +8,7 @@ events then point at those files in `artifacts`, so the agent that reads an even
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,14 +16,16 @@ from typing import TYPE_CHECKING, Any
 from glab_cli_extras.events import WATCH_STARTED, Event, utc_now_iso
 from glab_cli_extras.gitlab.client import ApiError
 from glab_cli_extras.gitlab.refs import ResourceRef
+from glab_cli_extras.paths import base_dir
 from glab_cli_extras.serde import from_jsonable
-from glab_cli_extras.store.job_logs import has_log, write_log
+from glab_cli_extras.store.job_logs import has_log, write_log, write_placeholder
 from glab_cli_extras.store.layout import THREADS_DIR, ensure_readme, pipeline_dir, resource_dir
 from glab_cli_extras.store.locks import LockTimeout
 from glab_cli_extras.store.state import load_state, locked, put_snapshot, save_state
 from glab_cli_extras.store.threads import ThreadStore, render_thread
-from glab_cli_extras.sync.job_logs import LogsMode, wants_log
+from glab_cli_extras.sync.job_logs import FINAL_JOB_STATUSES, LogsMode, wants_log
 from glab_cli_extras.sync.mr import MrSnapshot, snapshot_users, thread_sig
+from glab_cli_extras.sync.pipeline import JobState, PipelineSnapshot
 from glab_cli_extras.watch.sinks import StatusOutput
 
 if TYPE_CHECKING:
@@ -44,6 +47,7 @@ class ResourceWriter:
         self.logs = logs
         self.status = status
         self.dir = resource_dir(base, ref)
+        self._default_base = base == base_dir()
         self._mr: MrSnapshot | None = None
         self._pending_threads: set[str] = set()
 
@@ -70,6 +74,11 @@ class ResourceWriter:
                 save_state(self.dir, state)
         except (LockTimeout, OSError) as exc:
             self._fail("state.json", exc)
+        if self.ref.kind == "pipeline":
+            try:
+                self._placeholders(from_jsonable(PipelineSnapshot, data))
+            except ValueError as exc:
+                self._fail("the job log placeholders", exc)
         if self.ref.kind == "mr":
             try:
                 snap = from_jsonable(MrSnapshot, data)
@@ -78,6 +87,48 @@ class ResourceWriter:
                 return
             self._mr = snap
             self._sync_threads(set())
+
+    def inspect_command(self, project: str, pipeline_id: int) -> str:
+        """The glab-pipeline command that downloads every log of a pipeline into the same dir."""
+        parts = [
+            "glab-pipeline",
+            "inspect",
+            "--pipeline-url",
+            f"https://{self.ref.host}/{project}/-/pipelines/{pipeline_id}",
+        ]
+        if not self._default_base:
+            parts += ["--output-dir", str(pipeline_dir(self.base, self.ref.host, project, pipeline_id))]
+        parts.append("--logs=all")
+        return shlex.join(parts)
+
+    def _placeholders(self, snap: PipelineSnapshot) -> None:
+        """Every job of the tree gets a file at its log's path: a placeholder until its real log is written."""
+        by_pipeline: dict[tuple[str, int], list[JobState]] = {}
+        for job in snap.jobs:
+            by_pipeline.setdefault((job.project, job.pipeline_id), []).append(job)
+        for (project, pipeline_id), jobs in by_pipeline.items():
+            directory = pipeline_dir(self.base, self.ref.host, project, pipeline_id)
+            resource = ResourceRef("pipeline", self.ref.host, project, pipeline_id).key
+            try:
+                with locked(directory, LOCK_TIMEOUT):
+                    ensure_readme(directory, "pipeline")
+                    state = load_state(directory, resource)
+                    command = self.inspect_command(project, pipeline_id)
+                    for job in jobs:
+                        write_placeholder(
+                            directory,
+                            state,
+                            job_id=job.id,
+                            stage=job.stage,
+                            name=job.name,
+                            status=job.status,
+                            logs=self.logs,
+                            command=command,
+                            coming=job.status in FINAL_JOB_STATUSES and wants_log(self.logs, job.status),
+                        )
+                    save_state(directory, state)
+            except (LockTimeout, OSError) as exc:
+                self._fail(f"the job log placeholders in {directory}", exc)
 
     def _thread_store(self) -> ThreadStore:
         return ThreadStore(self.dir / THREADS_DIR)

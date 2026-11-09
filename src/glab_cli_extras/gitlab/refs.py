@@ -149,3 +149,57 @@ def parse_repo_ref(
         return ResourceRef(kind, parts.netloc, project, branch=branch)
     repo = resolve_repo(repo_arg, runner)
     return ResourceRef(kind, repo.host, repo.project, branch=branch)
+
+
+@dataclass(frozen=True, slots=True)
+class BranchMr:
+    host: str
+    project: str
+    iid: int
+    web_url: str
+    head_pipeline_id: int | None
+    source_branch: str | None
+
+
+_MR_URL_RE = re.compile(r"^https?://(?P<host>[^/]+)/(?P<project>.+?)/-/merge_requests/(?P<iid>\d+)/?$")
+
+
+def parse_mr_url(url: str) -> tuple[str, str, int]:
+    """`https://<host>/<project>/-/merge_requests/<iid>` → (host, project, iid). Raises RefError otherwise."""
+    match = _MR_URL_RE.match(url.strip())
+    if not match:
+        raise RefError(f"Invalid GitLab MR URL: {url}")
+    return match.group("host"), match.group("project"), int(match.group("iid"))
+
+
+_PIPELINE_URL_RE = re.compile(r"^https?://(?P<host>[^/]+)/(?P<project>.+?)/-/pipelines/(?P<id>\d+)/?$")
+
+
+def parse_pipeline_url(url: str) -> tuple[str, str, int]:
+    """`https://<host>/<project>/-/pipelines/<id>` → (host, project, id). Raises RefError otherwise."""
+    match = _PIPELINE_URL_RE.match(url.strip())
+    if not match:
+        raise RefError(f"Invalid GitLab pipeline URL: {url}")
+    return match.group("host"), match.group("project"), int(match.group("id"))
+
+
+def current_branch_mr(runner: SyncRunner = _default_runner) -> BranchMr:
+    """The merge request of the current git branch, as `glab mr view -F json` finds it."""
+    result = runner(["mr", "view", "-F", "json"])
+    try:
+        payload = json.loads(result.stdout or b"null")
+    except ValueError:
+        payload = None
+    if result.returncode != 0 or not isinstance(payload, dict) or "web_url" not in payload:
+        raise RefError(f"glab mr view failed: {stderr_message(result)}")
+    host, project, iid = parse_mr_url(str(payload["web_url"]))
+    head = payload.get("head_pipeline")
+    head_id = head.get("id") if isinstance(head, dict) else None
+    return BranchMr(
+        host,
+        project,
+        iid,
+        str(payload["web_url"]),
+        int(head_id) if isinstance(head_id, int) else None,
+        payload.get("source_branch"),
+    )

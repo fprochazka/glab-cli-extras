@@ -56,7 +56,13 @@ _README = {
     "pipeline": """What glab-cli-extras knows about one GitLab pipeline. A file is replaced as a whole when it changes.
 
 state.json     the pipeline's latest observed state: status, jobs, downstream pipelines, which job logs are here
-job-logs/      the logs fetched so far, one file per job: <stage>-<name>-<job id>.log
+job-logs/      one file per job: <stage>-<name>-<job id>.log. A job whose log was not downloaded has a placeholder
+               that starts with "[glab-cli-extras: log not downloaded]", says why, and gives the command that
+               downloads it
+summary.txt    the glab-pipeline inspect summary: failed jobs and their logs, lint, test report, downstream pipelines
+summary.json   the same summary as JSON
+pipeline.json, jobs.json, bridges.json, lint.json, merged.yml, test-report.json, downstream/, artifacts/
+               GitLab API responses, as glab-pipeline inspect writes them
 events.jsonl   every event glab-watch reported for this pipeline, one JSON object per line
 baseline.json  the last state the watcher saw, used after a daemon restart
 """,
