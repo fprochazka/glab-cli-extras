@@ -50,4 +50,4 @@ def test_daemon_status_without_a_daemon() -> None:
 
 
 def test_version() -> None:
-    assert runner.invoke(app, ["--version"]).output.strip() == "glab-watch 0.1.0"
+    assert runner.invoke(app, ["--version"]).output.strip() == "glab-watch 0.2.0"

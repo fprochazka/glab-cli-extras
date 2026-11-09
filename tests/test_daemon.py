@@ -104,7 +104,7 @@ def test_concurrent_clients_start_exactly_one_daemon(daemon_env: DaemonEnv) -> N
     assert len(pids) == 1
     assert daemon_running(daemon_env.files)
     log = daemon_env.files.log.read_text()
-    assert log.count("daemon 0.1.0 started") == 1
+    assert log.count("daemon 0.2.0 started") == 1
 
 
 def test_the_daemon_hands_a_large_log_to_its_clients_and_fetches_it_once(daemon_env: DaemonEnv) -> None:
@@ -392,7 +392,7 @@ def test_killing_a_watchers_whole_process_tree_leaves_the_shared_daemon_running(
     assert [json.loads(line)["data"]["reason"] for line in rest.splitlines()] == ["timeout"]
     assert "daemon restarted" not in err
     assert daemon_request(daemon_env.files, {"op": "hello"})["pid"] == daemon_pid
-    assert daemon_env.files.log.read_text().count("daemon 0.1.0 started") == 1
+    assert daemon_env.files.log.read_text().count("daemon 0.2.0 started") == 1
 
 
 @pytest.mark.skipif(os.name == "nt", reason="uses SIGSTOP and SIGTERM")
@@ -415,4 +415,4 @@ def test_a_stopping_watcher_never_starts_a_daemon(daemon_env: DaemonEnv) -> None
     assert json.loads(rest.splitlines()[-1])["data"]["reason"] == "signal SIGTERM"
     time.sleep(1.0)
     assert not daemon_running(daemon_env.files), "the stopping watcher started a new daemon"
-    assert daemon_env.files.log.read_text().count("daemon 0.1.0 started") == 1
+    assert daemon_env.files.log.read_text().count("daemon 0.2.0 started") == 1
