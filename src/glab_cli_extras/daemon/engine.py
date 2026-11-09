@@ -22,10 +22,9 @@ import uuid
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
-from glab_cli_extras.artifacts.job_logs import LOGS_MODES, LogsMode, merge_logs_modes
+from glab_cli_extras.daemon.cache import ByteBoundedCache
 from glab_cli_extras.daemon.scheduler import Scheduler
 from glab_cli_extras.events import (
     LIFECYCLE_KINDS,
@@ -48,6 +47,18 @@ from glab_cli_extras.gitlab.glab import GlabNotFoundError, GlabRunner, run_glab
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.resources import POLLERS
 from glab_cli_extras.resources.base import PollContext, Poller, PollerOptions, PushFeedCache
+from glab_cli_extras.resources.mr import prefetch_threads, thread_cache_key
+from glab_cli_extras.resources.pipeline import log_cache_key, prefetch_log
+from glab_cli_extras.sync.job_logs import (
+    FINAL_JOB_STATUSES,
+    LOGS_MODES,
+    LogContent,
+    LogsMode,
+    fetch_log_content,
+    merge_logs_modes,
+)
+from glab_cli_extras.sync.mr import MrSnapshot, fetch_discussions, thread_sig
+from glab_cli_extras.sync.pipeline import JobState, PipelineSnapshot
 
 log = logging.getLogger(__name__)
 
@@ -107,13 +118,11 @@ class Engine:
     def __init__(
         self,
         *,
-        cache_root: Path,
         runner: GlabRunner = run_glab,
         clock: Callable[[], float] = time.time,
         lease_timeout: float = DEFAULT_LEASE_TIMEOUT,
         client_poll_ms: int = DEFAULT_CLIENT_POLL_MS,
     ) -> None:
-        self.cache_root = cache_root
         self.clock = clock
         self.lease_timeout = lease_timeout
         self.client_poll_ms = client_poll_ms
@@ -124,6 +133,8 @@ class Engine:
         self._runner = runner
         self._clients: dict[str, GitLabClient] = {}
         self._push_feeds = PushFeedCache()
+        self.logs: ByteBoundedCache[LogContent] = ByteBoundedCache()
+        self.threads: ByteBoundedCache[dict[str, Any]] = ByteBoundedCache()
         self._inflight: dict[str, int] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._wake: asyncio.Event | None = None
@@ -247,7 +258,58 @@ class Engine:
                 host: {"budget": c.budget.describe(now), "requests": c.stats.describe()}
                 for host, c in sorted(self._clients.items())
             },
+            "caches": {"logs": self.logs.describe(), "threads": self.threads.describe()},
         }
+
+    # ----------------------------------------------------------------------------------------------------------
+    # Fetches on behalf of clients. The daemon writes no files: it hands the content to the client, which writes it.
+
+    async def _await_budget(self, host: str) -> None:
+        """Wait until the host's budget allows one more request, so on-demand fetches stay as gentle as polls."""
+        budget = self.client_for(host).budget
+        for _ in range(600):
+            now = self.clock()
+            if budget.can_spend(1.0, now):
+                return
+            await asyncio.sleep(min(5.0, max(0.05, budget.wait_time(1.0, now))))
+
+    def _known_job(self, host: str, job_id: int) -> JobState | None:
+        for res in self.resources.values():
+            snap = res.poller.snapshot
+            if res.ref.host == host and isinstance(snap, PipelineSnapshot):
+                for job in snap.jobs:
+                    if job.id == job_id:
+                        return job
+        return None
+
+    async def fetch_job_log(self, host: str, project: str, job_id: int) -> LogContent:
+        """The log of a job, from the cache when a poller or another client already fetched it.
+
+        Only the log of an ended job is cached: a running job's log still grows.
+        """
+        job = self._known_job(host, job_id)
+        if job is not None and job.status in FINAL_JOB_STATUSES:
+            ctx = PollContext(self.client_for(host), self.clock, self._push_feeds, self.logs, self.threads)
+            cached = self.logs.get(log_cache_key(host, job_id))
+            if cached is not None:
+                return cached
+            await self._await_budget(host)
+            return await prefetch_log(ctx, job)
+        await self._await_budget(host)
+        return await fetch_log_content(self.client_for(host), project, job_id, job.trace_size if job else None)
+
+    async def fetch_threads(self, ref: ResourceRef, ids: set[str]) -> dict[str, dict[str, Any]]:
+        """These discussions of a watched MR in their current version; a thread GitLab no longer has is left out."""
+        res = self.resources.get(ref.key)
+        snap = res.poller.snapshot if res is not None else None
+        ctx = PollContext(self.client_for(ref.host), self.clock, self._push_feeds, self.logs, self.threads)
+        if isinstance(snap, MrSnapshot) and snap.threads is not None:
+            sigs = {t.id: thread_sig(t) for t in snap.threads}
+            if any(self.threads.get(thread_cache_key(ref, i, sigs.get(i, ""))) is None for i in ids):
+                await self._await_budget(ref.host)
+            return await prefetch_threads(ctx, ref, snap, ids)
+        await self._await_budget(ref.host)
+        return await fetch_discussions(ctx.client, ref, ids)
 
     # ----------------------------------------------------------------------------------------------------------
     # Resources
@@ -255,7 +317,7 @@ class Engine:
     def _acquire(self, ref: ResourceRef) -> Resource:
         res = self.resources.get(ref.key)
         if res is None:
-            ctx = PollContext(self.client_for(ref.host), self.cache_root, self.clock, self._push_feeds)
+            ctx = PollContext(self.client_for(ref.host), self.clock, self._push_feeds, self.logs, self.threads)
             poller = POLLERS[ref.kind](ref, ctx, PollerOptions(frozenset(), "none"))
             res = Resource(ref, poller)
             self.resources[ref.key] = res

@@ -7,13 +7,33 @@ read as its last 500 KB only. The size comes from the job's trace artifact. Olde
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from glab_cli_extras.gitlab.client import GitLabClient, encode_project
+
+LogsMode = Literal["failed", "all", "none"]
+LOGS_MODES: tuple[LogsMode, ...] = ("failed", "all", "none")
+FINAL_JOB_STATUSES = frozenset({"success", "failed", "canceled", "skipped"})
 
 TAIL_BYTES = 500 * 1024
 """GitLab's `Gitlab::Ci::Trace::Stream::LIMIT_SIZE`, the largest `byte_limit` it accepts."""
 BYTE_OFFSET_MIN_VERSION = (19, 0)
+
+
+def merge_logs_modes(modes: list[LogsMode]) -> LogsMode:
+    if "all" in modes:
+        return "all"
+    if "failed" in modes:
+        return "failed"
+    return "none"
+
+
+def wants_log(mode: LogsMode, status: str) -> bool:
+    if mode == "all":
+        return status in ("success", "failed", "canceled")
+    if mode == "failed":
+        return status == "failed"
+    return False
 
 
 @dataclass(frozen=True, slots=True)

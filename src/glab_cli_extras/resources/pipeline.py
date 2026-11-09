@@ -5,8 +5,8 @@ Each poll sends the whole pipeline-tree query with `X-GITLAB-GRAPHQL-RESOURCE-ET
 the key on every job transition of the pipeline and its downstream pipelines. So one request is both the probe and
 the fetch. If the server sends no ETag, the poller falls back to plain polling at a slower interval.
 
-A job that ends and needs its log (per `--logs`) holds back its `job_finished` event until the log is in the cache,
-a few seconds later, so the event can carry the log path.
+A job that ends and needs its log (per `--logs`) holds back its `job_finished` event until the daemon has the log in
+memory, a few seconds later, so the client's request for it right after the event costs no GitLab request.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ import logging
 from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
 
-from glab_cli_extras.artifacts.job_logs import fetch_job_log, wants_log
 from glab_cli_extras.events import RawEvent
 from glab_cli_extras.gitlab.client import ApiError
-from glab_cli_extras.resources.base import Poller
+from glab_cli_extras.resources.base import PollContext, Poller
+from glab_cli_extras.sync.job_logs import LogContent, fetch_log_content, wants_log
 from glab_cli_extras.sync.pipeline import (
     FINAL_JOB_STATUSES,
     FINAL_PIPELINE_STATUSES,
@@ -45,6 +45,7 @@ INTERVAL_QUEUED_NO_ETAG = 60.0
 def _job_data(job: JobState) -> dict[str, Any]:
     data: dict[str, Any] = {
         "pipeline_id": job.pipeline_id,
+        "project": job.project,
         "job_id": job.id,
         "name": job.name,
         "stage": job.stage,
@@ -88,6 +89,21 @@ def diff_pipeline(prev: PipelineSnapshot, cur: PipelineSnapshot) -> list[RawEven
         if cur.status in FINAL_PIPELINE_STATUSES and prev.status not in FINAL_PIPELINE_STATUSES:
             events.append(RawEvent("finished", {"pipeline_id": cur.id, "status": cur.status, "web_url": cur.web_url}))
     return events
+
+
+def log_cache_key(host: str, job_id: int) -> tuple[str, str, int]:
+    return ("log", host, job_id)
+
+
+async def prefetch_log(ctx: PollContext, job: JobState) -> LogContent:
+    """The log of an ended job, from the engine's cache or fetched into it."""
+    key = log_cache_key(ctx.client.host, job.id)
+    cached = ctx.logs.get(key)
+    if cached is not None:
+        return cached
+    content = await fetch_log_content(ctx.client, job.project, job.id, job.trace_size)
+    ctx.logs.put(key, content, len(content.body))
+    return content
 
 
 @dataclass
@@ -166,23 +182,16 @@ class PipelinePoller(Poller[PipelineSnapshot]):
                 continue
             pending.attempts += 1
             try:
-                fetched = await fetch_job_log(
-                    self.ctx.client,
-                    self.ctx.cache_root,
-                    pending.job.project,
-                    pending.job.id,
-                    pending.job.name,
-                    pending.job.trace_size,
-                )
-            except (ApiError, OSError) as exc:
+                content = await prefetch_log(self.ctx, pending.job)
+            except ApiError as exc:
                 if pending.attempts < LOG_FETCH_ATTEMPTS:
                     pending.due = now + LOG_FETCH_DELAY * pending.attempts
                     continue
                 data = {**pending.event.data, "log_error": str(exc)}
                 released.append(replace(pending.event, data=data))
             else:
-                data = {**pending.event.data, "log_truncated": fetched.truncated}
-                released.append(replace(pending.event, data=data, artifacts=(str(fetched.path),)))
+                data = {**pending.event.data, "log_truncated": content.truncated}
+                released.append(replace(pending.event, data=data))
             del self._state.pending_logs[job_id]
         return released
 

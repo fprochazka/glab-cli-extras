@@ -89,7 +89,7 @@ def test_mr_list_reopen_and_close() -> None:
 
 def test_mr_list_poller_uses_the_watermark_with_overlap(clock: Clock, tmp_path: Path) -> None:
     fake = FakeGlab([Route("merge_requests", [rest_mr(1, "opened", "2026-11-09T09:00:00Z")])])
-    ctx = PollContext(GitLabClient(HOST, runner=fake, clock=clock), tmp_path, clock)
+    ctx = PollContext(GitLabClient(HOST, runner=fake, clock=clock), clock)
     poller = MrListPoller(ResourceRef("mrs", HOST, PROJECT), ctx, PollerOptions(frozenset(KINDS_BY_RESOURCE["mrs"])))
     assert asyncio.run(poller.poll()) == []
     fake.routes[0] = Route("merge_requests", [rest_mr(1, "merged", "2026-11-09T12:00:00Z")])
@@ -125,7 +125,7 @@ def test_branch_pipeline_diff() -> None:
 def _branch_poller(
     fake: FakeGlab, clock: Clock, tmp_path: Path, feeds: PushFeedCache | None = None, branch: str = "main"
 ) -> BranchPoller:
-    ctx = PollContext(GitLabClient(HOST, runner=fake, clock=clock), tmp_path, clock, feeds or PushFeedCache())
+    ctx = PollContext(GitLabClient(HOST, runner=fake, clock=clock), clock, feeds or PushFeedCache())
     return BranchPoller(
         ResourceRef("branch", HOST, PROJECT, branch=branch), ctx, PollerOptions(frozenset(KINDS_BY_RESOURCE["branch"]))
     )

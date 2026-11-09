@@ -24,7 +24,8 @@ import pytest
 
 from fakeglab import Route, install_fake_glab, write_spec
 from glab_cli_extras.daemon.lifecycle import daemon_running, ensure_daemon, spawn_daemon, stop_daemon
-from glab_cli_extras.daemon.transport import DaemonFiles
+from glab_cli_extras.daemon.server import decode_log
+from glab_cli_extras.daemon.transport import PROTOCOL_VERSION, DaemonFiles
 from glab_cli_extras.daemon.transport import request as daemon_request
 from shapes import HOST, PROJECT, gql_job, gql_pipeline
 
@@ -64,7 +65,7 @@ def daemon_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) 
     write_spec(spec, [])
     monkeypatch.setenv("PATH", str(root / "bin") + os.pathsep + os.environ.get("PATH", ""))
     monkeypatch.setenv("GLAB_CLI_EXTRAS_STATE_DIR", str(files.state_dir))
-    monkeypatch.setenv("GLAB_CLI_EXTRAS_CACHE_DIR", str(root / "cache"))
+    monkeypatch.setenv("GLAB_CLI_EXTRAS_BASE_DIR", str(root / "base"))
     monkeypatch.setenv("GLAB_CLI_EXTRAS_IDLE_TIMEOUT", "2")
     monkeypatch.setenv("GLAB_CLI_EXTRAS_LEASE_TIMEOUT", "2")
     monkeypatch.setenv("GLAB_CLI_EXTRAS_CLIENT_POLL_MS", "200")
@@ -104,6 +105,23 @@ def test_concurrent_clients_start_exactly_one_daemon(daemon_env: DaemonEnv) -> N
     assert daemon_running(daemon_env.files)
     log = daemon_env.files.log.read_text()
     assert log.count("daemon 0.1.0 started") == 1
+
+
+def test_the_daemon_hands_a_large_log_to_its_clients_and_fetches_it_once(daemon_env: DaemonEnv) -> None:
+    trace = "".join(f"line {n:07d} of a long build log ✓\n" for n in range(40_000))
+    daemon_env.routes(
+        Route("PipelineTree", {"data": gql_pipeline(5001, "failed", [gql_job(1, "t", "failed")])}, etag='W/"1"'),
+        Route("version", {"version": "18.11.0"}),
+        Route("jobs/1/trace", trace),
+    )
+    ensure_daemon(daemon_env.files)
+    _subscribe(daemon_env.files, "client-a")
+    wait_for(lambda: daemon_env.calls.exists() and "graphql" in daemon_env.calls.read_text(), 15, "the first poll")
+    payload = {"op": "fetch_job_log", "host": HOST, "project": PROJECT, "job_id": 1}
+    first = decode_log(daemon_request(daemon_env.files, payload, timeout=30)["log"])
+    second = decode_log(daemon_request(daemon_env.files, payload, timeout=30)["log"])
+    assert len(first.body) > 1_000_000 and first.body == second.body == trace.encode()
+    assert daemon_env.calls.read_text().count("jobs/1/trace") == 1
 
 
 def test_a_second_daemon_exits_at_once(daemon_env: DaemonEnv) -> None:
@@ -173,9 +191,7 @@ def test_watch_command_streams_jsonl_and_header_goes_to_stderr(daemon_env: Daemo
         Route("PipelineTree", {"data": gql_pipeline(5001, "success", [gql_job(1, "t", "success")])}, etag='W/"1"')
     )
     changelog = daemon_env.root / "changelog"
-    watch = _watch(
-        ["pipeline", PIPELINE_URL, "--events-stream=stdout", "--changelog-dir", str(changelog)], daemon_env.env()
-    )
+    watch = _watch(["pipeline", PIPELINE_URL, "--events-stream=stdout", "--base-dir", str(changelog)], daemon_env.env())
     out, err = watch.communicate(timeout=30)
     assert watch.returncode == 0, err
     lines = out.splitlines()
@@ -185,10 +201,13 @@ def test_watch_command_streams_jsonl_and_header_goes_to_stderr(daemon_env: Daemo
     assert header[0] == f"glab-watch: resource: pipeline {HOST}/{PROJECT}!5001"
     assert any(line.startswith("glab-watch: ignored: (none)") for line in header)
     assert any(line.startswith("glab-watch: restart with: glab-watch pipeline ") for line in header)
-    events_file = changelog / HOST / "group" / "project" / "pipeline-5001" / "events.jsonl"
+    events_file = changelog / HOST / "group" / "project" / "-" / "pipelines" / "5001" / "events.jsonl"
     assert events_file.read_text().splitlines() == lines
-    state = json.loads((events_file.parent / "state.json").read_text())
-    assert state["resource"] == f"pipeline {HOST}/{PROJECT}!5001"
+    assert f"glab-watch: changelog: {events_file}" in header
+    for name in ("baseline.json", "state.json"):
+        stored = json.loads((events_file.parent / name).read_text())
+        assert stored["resource"] == f"pipeline {HOST}/{PROJECT}!5001"
+    assert (events_file.parent / "README.txt").is_file()
 
 
 def test_under_claude_code_the_header_still_goes_to_stderr(daemon_env: DaemonEnv) -> None:
@@ -199,7 +218,7 @@ def test_under_claude_code_the_header_still_goes_to_stderr(daemon_env: DaemonEnv
             PIPELINE_URL,
             "--events-stream=stdout",
             "--exclude-events=finished",
-            "--changelog-dir",
+            "--base-dir",
             str(daemon_env.root / "c"),
         ],
         daemon_env.env(CLAUDECODE="1"),
@@ -225,7 +244,7 @@ def test_watcher_survives_a_daemon_restart_without_a_duplicate_start(daemon_env:
             "--events-stream=stdout",
             "--timeout=6s",
             "--logs=none",
-            "--changelog-dir",
+            "--base-dir",
             str(daemon_env.root / "c"),
         ],
         daemon_env.env(),
@@ -253,7 +272,7 @@ def test_daemon_cli_status_and_stop(daemon_env: DaemonEnv) -> None:
         timeout=30,
     )
     assert status.returncode == 0, status.stderr
-    assert json.loads(status.stdout)["protocol"] == 1
+    assert json.loads(status.stdout)["protocol"] == PROTOCOL_VERSION
     stop = subprocess.run(
         [sys.executable, "-c", "from glab_cli_extras.cli.watch import main; main()", "daemon", "stop"],
         capture_output=True,
@@ -286,12 +305,12 @@ def _running_pipeline(daemon_env: DaemonEnv) -> None:
 def test_killing_a_watchers_whole_process_tree_leaves_the_shared_daemon_running(daemon_env: DaemonEnv) -> None:
     _running_pipeline(daemon_env)
     common = ["pipeline", PIPELINE_URL, "--events-stream=stdout", "--logs=none"]
-    first = _watch([*common, "--changelog-dir", str(daemon_env.root / "c1")], daemon_env.env())
+    first = _watch([*common, "--base-dir", str(daemon_env.root / "c1")], daemon_env.env())
     assert first.stdout is not None and json.loads(first.stdout.readline())["kind"] == "watch_started"
     daemon_pid = daemon_request(daemon_env.files, {"op": "hello"})["pid"]
     assert daemon_pid not in _descendants(first.pid)
 
-    second = _watch([*common, "--timeout=4s", "--changelog-dir", str(daemon_env.root / "c2")], daemon_env.env())
+    second = _watch([*common, "--timeout=4s", "--base-dir", str(daemon_env.root / "c2")], daemon_env.env())
     assert second.stdout is not None and json.loads(second.stdout.readline())["kind"] == "watch_started"
 
     # What a tree kill does: SIGKILL the process and everything below it.
@@ -312,7 +331,7 @@ def test_killing_a_watchers_whole_process_tree_leaves_the_shared_daemon_running(
 def test_a_stopping_watcher_never_starts_a_daemon(daemon_env: DaemonEnv) -> None:
     _running_pipeline(daemon_env)
     watch = _watch(
-        ["pipeline", PIPELINE_URL, "--events-stream=stdout", "--changelog-dir", str(daemon_env.root / "c")],
+        ["pipeline", PIPELINE_URL, "--events-stream=stdout", "--base-dir", str(daemon_env.root / "c")],
         daemon_env.env(),
     )
     assert watch.stdout is not None and json.loads(watch.stdout.readline())["kind"] == "watch_started"

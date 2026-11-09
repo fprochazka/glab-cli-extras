@@ -1,4 +1,4 @@
-"""Filesystem locations: the shared artifact cache, the daemon state dir, and the default changelog dir.
+"""Filesystem locations: the base dir every command writes its files under, and the daemon state dir.
 
 Each location can be overridden by an environment variable, which the tests use to stay inside tmp dirs.
 """
@@ -10,8 +10,12 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-CACHE_DIR_ENV = "GLAB_CLI_EXTRAS_CACHE_DIR"
+if TYPE_CHECKING:
+    from cc_blackbox import ActiveSession
+
+BASE_DIR_ENV = "GLAB_CLI_EXTRAS_BASE_DIR"
 STATE_DIR_ENV = "GLAB_CLI_EXTRAS_STATE_DIR"
 APP = "glab-cli-extras"
 
@@ -36,17 +40,33 @@ def _uid_suffix() -> str:
     return str(getuid()) if getuid is not None else (os.environ.get("USERNAME") or "user")
 
 
-def user_cache_dir() -> Path:
-    override = os.environ.get(CACHE_DIR_ENV)
-    if override:
-        return Path(override)
-    if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-        return base / APP / "cache"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / APP
-    xdg = os.environ.get("XDG_CACHE_HOME")
-    return (Path(xdg) if xdg else Path.home() / ".cache") / APP
+def find_session() -> ActiveSession | None:
+    """The Claude Code session this process runs under, or None."""
+    from cc_blackbox import ClaudeBlackboxError, current_session
+
+    try:
+        return current_session()
+    except (ClaudeBlackboxError, OSError):
+        return None
+
+
+def base_dir(override: Path | None = None, session: ActiveSession | None = None, *, detect: bool = True) -> Path:
+    """The dir every command writes its resource dirs under.
+
+    `override` wins, then `GLAB_CLI_EXTRAS_BASE_DIR`. Under a Claude Code session it is `<scratchpad>/glab-cli-extras`,
+    which Claude Code removes after a few months. Otherwise `<temp dir>/glab-cli-extras-<uid>`, private to the user,
+    which the OS cleans. Nothing is kept forever. With `detect`, the session is looked up when none is given.
+    """
+    if override is not None:
+        return override
+    env = os.environ.get(BASE_DIR_ENV)
+    if env:
+        return Path(env)
+    if session is None and detect:
+        session = find_session()
+    if session is not None and session.scratchpad_dir is not None:
+        return session.scratchpad_dir / APP
+    return ensure_private_dir(Path(tempfile.gettempdir()) / f"{APP}-{_uid_suffix()}")
 
 
 def daemon_state_dir() -> Path:
@@ -73,7 +93,3 @@ def ensure_private_dir(path: Path) -> Path:
     if os.name != "nt":
         os.chmod(path, 0o700)
     return path
-
-
-def default_changelog_root() -> Path:
-    return Path(tempfile.gettempdir()) / f"glab-watch-{_uid_suffix()}"

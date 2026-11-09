@@ -22,8 +22,9 @@ from typing import Any
 
 from glab_cli_extras.paths import daemon_state_dir, ensure_private_dir
 
-PROTOCOL_VERSION = 1
-MAX_LINE = 4 * 1024 * 1024
+PROTOCOL_VERSION = 2
+MAX_LINE = 64 * 1024 * 1024
+"""Enough for a job log of several MB, base64-encoded, in one response line."""
 TRANSPORT_ENV = "GLAB_CLI_EXTRAS_TRANSPORT"
 
 Handler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]

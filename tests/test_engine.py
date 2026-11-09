@@ -22,7 +22,7 @@ def pipeline_route(status: str, *jobs: dict[str, Any], etag: str = 'W/"1"') -> R
 
 
 def make_engine(fake: FakeGlab, clock: Clock, tmp_path: Path) -> Engine:
-    return Engine(cache_root=tmp_path / "cache", runner=fake, clock=clock)
+    return Engine(runner=fake, clock=clock)
 
 
 def events_of(response: dict[str, Any], sid: str) -> list[dict[str, Any]]:

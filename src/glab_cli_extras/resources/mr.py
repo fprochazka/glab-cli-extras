@@ -1,8 +1,8 @@
 """Merge request watching: one GraphQL snapshot per poll, follow-up requests only for what moved.
 
 - A moved `diffHeadSha` is a push. One `merge_base` request tells a fast-forward from a force-push.
-- A thread whose notes changed (`updatedAt` moves on edit, resolve and unresolve) is re-fetched alone and its file
-  rewritten. Many changed threads at once are fetched with one list request instead.
+- A thread whose notes changed (`updatedAt` moves on edit, resolve and unresolve) is re-fetched alone into the engine's
+  cache, for the clients to write. Many changed threads at once are fetched with one list request instead.
 - The head pipeline is a separate, shared `pipeline` resource; the daemon relays its events into the MR's stream.
 
 The MR's own `updated_at` is not used: GitLab skips touching it within a minute of the last touch, and head pipeline
@@ -11,15 +11,14 @@ changes and single resolves never touch it.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import replace
 from typing import Any, ClassVar
 
-from glab_cli_extras.artifacts.threads import ThreadStore
 from glab_cli_extras.events import GROUPS, PIPELINE_KINDS, RawEvent
 from glab_cli_extras.gitlab.refs import ResourceRef
-from glab_cli_extras.paths import project_dir
-from glab_cli_extras.resources.base import Poller, PollerOptions, is_force_push
+from glab_cli_extras.resources.base import PollContext, Poller, PollerOptions, is_force_push
 from glab_cli_extras.sync.mr import (
     MrSnapshot,
     NoteState,
@@ -28,6 +27,7 @@ from glab_cli_extras.sync.mr import (
     fetch_snapshot,
     parse_mr,
     parse_threads,
+    thread_sig,
 )
 
 log = logging.getLogger(__name__)
@@ -152,13 +152,42 @@ def diff_mr(prev: MrSnapshot, cur: MrSnapshot) -> list[RawEvent]:
     return events
 
 
+def thread_cache_key(ref: ResourceRef, discussion_id: str, sig: str) -> tuple[str, str, str, str]:
+    return ("thread", ref.key, discussion_id, sig)
+
+
+async def prefetch_threads(
+    ctx: PollContext, ref: ResourceRef, snapshot: MrSnapshot, ids: set[str]
+) -> dict[str, dict[str, Any]]:
+    """These threads in their current version, from the engine's cache or fetched into it.
+
+    A thread GitLab no longer returns (deleted, or rewritten for a moment after a force-push) is left out, so a
+    client keeps its old file until the snapshot drops the thread.
+    """
+    sigs = {t.id: thread_sig(t) for t in snapshot.threads or ()}
+    found: dict[str, dict[str, Any]] = {}
+    missing: set[str] = set()
+    for discussion_id in ids:
+        sig = sigs.get(discussion_id)
+        cached = ctx.threads.get(thread_cache_key(ref, discussion_id, sig)) if sig else None
+        if cached is not None:
+            found[discussion_id] = cached
+        else:
+            missing.add(discussion_id)
+    if missing:
+        fetched = await fetch_discussions(ctx.client, ref, missing)
+        for discussion_id, discussion in fetched.items():
+            found[discussion_id] = discussion
+            sig = sigs.get(discussion_id)
+            if sig:
+                size = len(json.dumps(discussion, ensure_ascii=False))
+                ctx.threads.put(thread_cache_key(ref, discussion_id, sig), discussion, size)
+    return found
+
+
 class MrPoller(Poller[MrSnapshot]):
     kind: ClassVar = "mr"
     snapshot_type: ClassVar = MrSnapshot
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._threads: ThreadStore | None = None
 
     @property
     def _wants_threads(self) -> bool:
@@ -168,15 +197,6 @@ class MrPoller(Poller[MrSnapshot]):
     def _wants_pipeline(self) -> bool:
         return self.options.wants("head_pipeline_changed", *PIPELINE_KINDS)
 
-    def thread_store(self, web_url: str | None) -> ThreadStore:
-        if self._threads is None:
-            directory = (
-                project_dir(self.ctx.cache_root, self.ref.host, self.ref.project) / f"mr-{self.ref.id}" / "threads"
-            )
-            fallback = f"https://{self.ref.host}/{self.ref.project}/-/merge_requests/{self.ref.id}"
-            self._threads = ThreadStore(directory, web_url or fallback)
-        return self._threads
-
     async def _fetch_snapshot(self) -> MrSnapshot:
         return await fetch_snapshot(
             self.ctx.client, self.ref, with_threads=self._wants_threads, with_pipeline=self._wants_pipeline
@@ -185,29 +205,13 @@ class MrPoller(Poller[MrSnapshot]):
     async def _is_force_push(self, old_sha: str, new_sha: str) -> tuple[bool, str | None]:
         return await is_force_push(self.ctx.client, self.ref.project, old_sha, new_sha)
 
-    async def _sync_all_threads(self, store: ThreadStore) -> dict[str, str]:
-        return self._write_threads(store, await fetch_discussions(self.ctx.client, self.ref, None))
-
-    async def _sync_threads(self, store: ThreadStore, ids: set[str]) -> dict[str, str]:
-        return self._write_threads(store, await fetch_discussions(self.ctx.client, self.ref, ids))
-
-    @staticmethod
-    def _write_threads(store: ThreadStore, discussions: dict[str, Any]) -> dict[str, str]:
-        paths = {}
-        for discussion_id, discussion in discussions.items():
-            path, _ = store.write(discussion)
-            paths[discussion_id] = str(path)
-        return paths
-
     async def poll(self) -> list[RawEvent]:
         prev = self.snapshot
         cur = settle(prev, await self._fetch_snapshot())
-        store = self.thread_store(cur.web_url) if cur.threads is not None else None
 
         if prev is None or (prev.threads is None and cur.threads is not None):
-            # Baseline, or comment tracking just started: write every thread file, report nothing about threads.
-            if store is not None:
-                await self._sync_all_threads(store)
+            # Baseline, or comment tracking just started: report nothing about threads. Each client fetches the
+            # threads its own files lack, through the engine.
             if prev is None:
                 self.snapshot = cur
                 self._check_terminal()
@@ -226,34 +230,14 @@ class MrPoller(Poller[MrSnapshot]):
             resolved_events.append(event)
         events = resolved_events
 
-        if store is not None and prev.threads is not None and cur.threads is not None:
-            events = await self._attach_thread_files(store, prev.threads, cur.threads, events)
+        if cur.threads is not None:
+            changed = {str(e.data["discussion_id"]) for e in events if e.kind in COMMENT_KINDS}
+            if changed:
+                await prefetch_threads(self.ctx, self.ref, cur, changed)
 
         self.snapshot = cur
         self._check_terminal()
         return events
-
-    async def _attach_thread_files(
-        self,
-        store: ThreadStore,
-        prev: tuple[ThreadState, ...],
-        cur: tuple[ThreadState, ...],
-        events: list[RawEvent],
-    ) -> list[RawEvent]:
-        changed = {str(e.data["discussion_id"]) for e in events if e.kind in COMMENT_KINDS}
-        for gone in {t.id for t in prev} - {t.id for t in cur}:
-            store.remove(gone)
-        if not changed:
-            return events
-        paths = await self._sync_threads(store, changed)
-        attached = []
-        for event in events:
-            if event.kind in COMMENT_KINDS:
-                path = paths.get(str(event.data["discussion_id"]))
-                if path:
-                    event = replace(event, artifacts=(path,))
-            attached.append(event)
-        return attached
 
     def _check_terminal(self) -> None:
         if self.snapshot is not None and self.snapshot.state in TERMINAL_STATES:
@@ -288,7 +272,6 @@ class MrPoller(Poller[MrSnapshot]):
             summary["threads"] = {
                 "total": len(snap.threads),
                 "unresolved": sum(1 for t in snap.threads if t.resolvable and not t.resolved),
-                "dir": str(self.thread_store(snap.web_url).directory),
             }
         return summary
 

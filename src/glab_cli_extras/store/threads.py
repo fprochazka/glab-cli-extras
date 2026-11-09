@@ -112,9 +112,21 @@ class ThreadStore:
 
     def path_for(self, discussion_id: str) -> Path | None:
         entry = self._meta.get(discussion_id)
-        return self.directory / entry["filename"] if entry else None
+        if not entry:
+            return None
+        path = self.directory / entry["filename"]
+        return path if path.is_file() else None
 
-    def write(self, discussion: Mapping[str, Any]) -> tuple[Path, bool]:
+    def sig(self, discussion_id: str) -> str | None:
+        """The signature of the note versions the thread's file was rendered from, None when unknown."""
+        entry = self._meta.get(discussion_id)
+        return entry.get("sig") if entry else None
+
+    def discussion_ids(self) -> set[str]:
+        """The discussions that have a file. Draft keys (`draft-<id>`) are not discussions and never listed."""
+        return {key for key in self._meta if not key.startswith("draft-")}
+
+    def write(self, discussion: Mapping[str, Any], sig: str | None = None) -> tuple[Path, bool]:
         """Write the thread's file if its content changed. Return the path and whether it was written."""
         discussion_id = str(discussion["id"])
         content = render_discussion(discussion, self.mr_url)
@@ -123,12 +135,17 @@ class ThreadStore:
         digest = _hash(content)
         old = self._meta.get(discussion_id)
         if old and old.get("hash") == digest and old.get("filename") == filename and path.is_file():
+            if sig is not None and old.get("sig") != sig:
+                old["sig"] = sig
+                self._save_meta()
             return path, False
         atomic_write_text(path, content)
         if old and old.get("filename") and old["filename"] != filename:
             with contextlib.suppress(OSError):
                 (self.directory / old["filename"]).unlink()
         self._meta[discussion_id] = {"filename": filename, "hash": digest}
+        if sig is not None:
+            self._meta[discussion_id]["sig"] = sig
         self._save_meta()
         return path, True
 

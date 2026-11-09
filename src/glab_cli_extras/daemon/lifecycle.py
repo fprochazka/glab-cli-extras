@@ -27,7 +27,7 @@ from glab_cli_extras import __version__
 from glab_cli_extras.daemon.engine import DEFAULT_CLIENT_POLL_MS, DEFAULT_LEASE_TIMEOUT, Engine
 from glab_cli_extras.daemon.server import handle
 from glab_cli_extras.daemon.transport import DaemonFiles, DaemonUnavailable, request, start_server, use_tcp
-from glab_cli_extras.paths import ensure_private_dir, user_cache_dir
+from glab_cli_extras.paths import ensure_private_dir
 from glab_cli_extras.store.locks import FileLock
 
 log = logging.getLogger("glab_cli_extras.daemon")
@@ -57,7 +57,7 @@ async def serve(
             loop.add_signal_handler(sig, stop.set)
 
     async def on_request(req: dict[str, Any]) -> dict[str, Any]:
-        return handle(engine, req, stop)
+        return await handle(engine, req, stop)
 
     server, cleanup = await start_server(files, on_request)
     log.info(
@@ -138,7 +138,6 @@ def _serve_daemon(ready_fd: int | None) -> int:
             log.info("another daemon holds %s, exiting", files.lock)
             return 0
         engine = Engine(
-            cache_root=user_cache_dir(),
             lease_timeout=_env_float(LEASE_TIMEOUT_ENV, DEFAULT_LEASE_TIMEOUT),
             client_poll_ms=int(_env_float(CLIENT_POLL_MS_ENV, DEFAULT_CLIENT_POLL_MS)),
         )

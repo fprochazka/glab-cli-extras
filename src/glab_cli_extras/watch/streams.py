@@ -1,8 +1,8 @@
-"""Choosing the events stream, and the default changelog location that comes with it.
+"""Choosing the events stream, and the base dir that comes with the session.
 
 `auto` picks `claude-message` when the watcher runs under a Claude Code session that accepts messages, else `stdout`.
-Under a Claude session the changelog defaults to `<session scratchpad>/glab-watch` in either mode, so the agent finds
-it next to its other files.
+Under a Claude session every file goes to `<session scratchpad>/glab-cli-extras` in either mode, so the agent finds
+it next to its other files; see `paths.base_dir`.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from typing import cast
 from cc_blackbox import ActiveSession, Priority
 
 from glab_cli_extras.gitlab.refs import ResourceRef
+from glab_cli_extras.paths import base_dir
 from glab_cli_extras.watch.changelog import Changelog
 from glab_cli_extras.watch.claude import ClaudeMessageSink, find_session
 from glab_cli_extras.watch.sinks import Sink, StatusOutput, StdoutSink
@@ -33,12 +34,6 @@ class Stream:
     changelog: Changelog
     fallback: str | None = None
     """Why `auto` picked stdout although the watcher runs under a Claude Code session; printed in the header."""
-
-
-def scratchpad_root(session: ActiveSession | None) -> Path | None:
-    if session is None or session.scratchpad_dir is None:
-        return None
-    return session.scratchpad_dir / "glab-watch"
 
 
 def messaging_problem(session: ActiveSession | None) -> str | None:
@@ -61,13 +56,11 @@ def open_stream(
     mode: str,
     ref: ResourceRef,
     priority: str,
-    changelog_dir: Path | None,
-    default_root: Path,
+    base_dir_override: Path | None,
     status: StatusOutput,
 ) -> Stream:
     session = find_session()
-    root = changelog_dir or scratchpad_root(session) or default_root
-    changelog = Changelog(root, ref)
+    changelog = Changelog(base_dir(base_dir_override, session, detect=False), ref)
     problem = messaging_problem(session)
     if mode == "claude-message" and problem is not None:
         raise StreamError(f"--events-stream=claude-message is not possible: {problem}; use --events-stream=stdout")

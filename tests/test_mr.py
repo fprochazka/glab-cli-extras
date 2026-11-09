@@ -11,7 +11,8 @@ from glab_cli_extras.events import GROUPS, KINDS_BY_RESOURCE
 from glab_cli_extras.gitlab.client import GitLabClient
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.resources.base import PollContext, PollerOptions
-from glab_cli_extras.resources.mr import MrPoller, diff_mr, parse_mr, parse_threads, settle
+from glab_cli_extras.resources.mr import MrPoller, diff_mr, parse_mr, parse_threads, settle, thread_cache_key
+from glab_cli_extras.sync.mr import thread_sig
 from shapes import HOST, PROJECT, gql_mr, gql_thread, rest_discussion
 
 REF = ResourceRef("mr", HOST, PROJECT, 42)
@@ -103,13 +104,11 @@ def test_thread_diff_tells_new_notes_from_resolves_and_edits() -> None:
 
 
 def _poller(fake: FakeGlab, clock: Clock, tmp_path: Path, options: PollerOptions = ALL) -> MrPoller:
-    ctx = PollContext(GitLabClient(HOST, runner=fake, clock=clock), tmp_path / "cache", clock)
+    ctx = PollContext(GitLabClient(HOST, runner=fake, clock=clock), clock)
     return MrPoller(REF, ctx, options)
 
 
-def test_poller_baseline_writes_thread_files_and_changes_refetch_only_changed_threads(
-    clock: Clock, tmp_path: Path
-) -> None:
+def test_poller_fetches_only_the_threads_that_changed_into_the_cache(clock: Clock, tmp_path: Path) -> None:
     thread_a = gql_thread("aaa111", [(1, "2026-11-09T09:00:00Z", "reviewer-one")])
     fake = FakeGlab(
         [
@@ -118,16 +117,13 @@ def test_poller_baseline_writes_thread_files_and_changes_refetch_only_changed_th
                 "merge_requests/42/discussions/bbb222",
                 rest_discussion("bbb222", [(7, "reviewer-two", "Please rename this.")], diff=True),
             ),
-            Route("merge_requests/42/discussions", [rest_discussion("aaa111", [(1, "reviewer-one", "Looks fine.")])]),
             Route("repository/merge_base", {"id": SHA1}),
         ]
     )
     poller = _poller(fake, clock, tmp_path)
+    # The baseline fetches no thread at all: each client asks for the threads its own files lack.
     assert asyncio.run(poller.poll()) == []
-    thread_dir = tmp_path / "cache" / HOST / "group" / "project" / "mr-42" / "threads"
-    files = sorted(p.name for p in thread_dir.glob("*.md"))
-    assert files == ["2026-11-09T09-30-reviewer-one-aaa111.md"]
-    assert "[2026-11-09 09:30:00] @reviewer-one (note:1):\nLooks fine." in (thread_dir / files[0]).read_text()
+    assert fake.endpoints() == ["graphql"]
     assert poller.summary()["threads"]["unresolved"] == 1
     assert poller.children() == frozenset({ResourceRef("pipeline", HOST, PROJECT, 5001)})
 
@@ -137,13 +133,16 @@ def test_poller_baseline_writes_thread_files_and_changes_refetch_only_changed_th
     events = asyncio.run(poller.poll())
     assert kinds(events) == ["pushed", "thread_created"]
     assert events[0].data == {"from": SHA1, "to": SHA2, "forced": False}
-    content = Path(events[1].artifacts[0]).read_text()
-    assert "Type: DiffNote" in content and "File: src/login.py" in content and "Line: new:17" in content
+    assert events[1].artifacts == ()
     rest_calls = [e for e in fake.endpoints() if e != "graphql"]
     assert rest_calls == [
         f"projects/group%2Fproject/repository/merge_base?refs[]={SHA1}&refs[]={SHA2}",
         "projects/group%2Fproject/merge_requests/42/discussions/bbb222",
     ]
+    assert poller.snapshot is not None and poller.snapshot.threads is not None
+    sig = thread_sig(poller.snapshot.threads[1])
+    cached = poller.ctx.threads.get(thread_cache_key(REF, "bbb222", sig))
+    assert cached is not None and cached["id"] == "bbb222"
 
 
 def test_force_push_when_the_old_head_is_gone(clock: Clock, tmp_path: Path) -> None:

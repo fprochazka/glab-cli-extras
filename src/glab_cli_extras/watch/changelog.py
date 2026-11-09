@@ -1,7 +1,9 @@
-"""The client's per-resource changelog: `events.jsonl` (append-only) and `state.json` (the last snapshot).
+"""The watcher's changelog in the resource dir: `events.jsonl` (append-only) and `baseline.json` (its last snapshot).
 
-The stored snapshot lets a watcher resubscribe after a daemon restart without a fake "something changed": the new
-daemon diffs against it, and the client drops the new `watch_started` when the snapshot hash did not move.
+The baseline lets a watcher resubscribe after a daemon restart without a fake "something changed": the new daemon
+diffs against it, and the client drops the new `watch_started` when the snapshot hash did not move. It is what this
+watcher saw, which is why it is not the dir's `state.json`: other writers move that file forward, and a watcher that
+resubscribed from it would skip the events in between.
 """
 
 from __future__ import annotations
@@ -15,16 +17,8 @@ from typing import Any
 
 from glab_cli_extras.events import Event, utc_now_iso
 from glab_cli_extras.gitlab.refs import ResourceRef
-from glab_cli_extras.paths import project_dir, sanitize_part
 from glab_cli_extras.store.atomic import atomic_write_json
-
-
-def resource_dir_name(ref: ResourceRef) -> str:
-    if ref.kind in ("mr", "pipeline"):
-        return f"{ref.kind}-{ref.id}"
-    if ref.kind == "branch":
-        return f"branch-{sanitize_part(ref.branch or '')}"
-    return ref.kind
+from glab_cli_extras.store.layout import ensure_readme, resource_dir
 
 
 @dataclass(frozen=True)
@@ -34,17 +28,19 @@ class StoredState:
 
 
 class Changelog:
-    def __init__(self, root: Path, ref: ResourceRef) -> None:
+    def __init__(self, base: Path, ref: ResourceRef) -> None:
         self.ref = ref
-        self.dir = project_dir(root, ref.host, ref.project) / resource_dir_name(ref)
+        self.base = base
+        self.dir = resource_dir(base, ref)
         self.events_path = self.dir / "events.jsonl"
-        self.state_path = self.dir / "state.json"
+        self.baseline_path = self.dir / "baseline.json"
 
     def append(self, events: Iterable[Event]) -> None:
         lines = [json.dumps(e.to_json(), ensure_ascii=False, separators=(",", ":")) + "\n" for e in events]
         if not lines:
             return
         self.dir.mkdir(parents=True, exist_ok=True)
+        ensure_readme(self.dir, self.ref.kind)
         with open(self.events_path, "a", encoding="utf-8") as fh:
             fh.writelines(lines)
 
@@ -65,16 +61,16 @@ class Changelog:
                 continue
         return 0
 
-    def load_state(self) -> StoredState | None:
+    def load_baseline(self) -> StoredState | None:
         try:
-            raw = json.loads(self.state_path.read_text(encoding="utf-8"))
+            raw = json.loads(self.baseline_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
         if not isinstance(raw, dict) or raw.get("resource") != self.ref.key:
             return None
         return StoredState(raw.get("snapshot_hash"), raw.get("snapshot"))
 
-    def save_state(self, snapshot_hash: str, snapshot: Any) -> None:
+    def save_baseline(self, snapshot_hash: str, snapshot: Any) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "resource": self.ref.key,
@@ -82,4 +78,4 @@ class Changelog:
             "snapshot": snapshot,
             "written_at": utc_now_iso(),
         }
-        atomic_write_json(self.state_path, payload)
+        atomic_write_json(self.baseline_path, payload)

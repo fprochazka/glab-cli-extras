@@ -11,15 +11,15 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, ClassVar, Generic, TypeVar
 
-from glab_cli_extras.artifacts.job_logs import LogsMode
+from glab_cli_extras.daemon.cache import ByteBoundedCache
 from glab_cli_extras.events import RawEvent
 from glab_cli_extras.gitlab.client import ApiError, GitLabClient, encode_project
 from glab_cli_extras.gitlab.refs import ResourceKind, ResourceRef
 from glab_cli_extras.gitlab.values import gid_to_int, lower
 from glab_cli_extras.serde import from_jsonable, stable_hash, to_jsonable
+from glab_cli_extras.sync.job_logs import LogContent, LogsMode
 
 __all__ = ["PollContext", "Poller", "PollerOptions", "PushFeedCache", "gid_to_int", "is_force_push", "lower"]
 
@@ -72,10 +72,14 @@ class PushFeedCache:
 
 @dataclass
 class PollContext:
+    """What a poller shares with the engine. The caches hold what the pollers fetched ahead for the clients: the logs
+    of jobs that ended and the threads that changed, so the client's request right after the event is a hit."""
+
     client: GitLabClient
-    cache_root: Path
     clock: Callable[[], float] = time.time
     push_feeds: PushFeedCache = field(default_factory=PushFeedCache)
+    logs: ByteBoundedCache[LogContent] = field(default_factory=ByteBoundedCache)
+    threads: ByteBoundedCache[dict[str, Any]] = field(default_factory=ByteBoundedCache)
 
 
 S = TypeVar("S")

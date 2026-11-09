@@ -14,23 +14,26 @@ import signal
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, replace
-from pathlib import Path
 from types import FrameType
 from typing import Any, Protocol, TypeVar
 
-from glab_cli_extras.artifacts.job_logs import LogsMode
 from glab_cli_extras.daemon.engine import Engine
 from glab_cli_extras.daemon.lifecycle import ensure_daemon
+from glab_cli_extras.daemon.server import decode_log
 from glab_cli_extras.daemon.transport import DaemonFiles, DaemonUnavailable, request
 from glab_cli_extras.events import WATCH_ENDED, WATCH_STARTED, Event, utc_now_iso
 from glab_cli_extras.gitlab.refs import ResourceRef
+from glab_cli_extras.sync.job_logs import LogContent, LogsMode
 from glab_cli_extras.watch.changelog import Changelog
 from glab_cli_extras.watch.sinks import Sink, StatusOutput
+from glab_cli_extras.watch.writer import ResourceWriter
 
 T = TypeVar("T")
 
+FETCH_TIMEOUT = 300.0
+"""A fetch may wait for the host's budget and then download a large log."""
 EXIT_OK = 0
 EXIT_ERROR = 1
 
@@ -49,6 +52,14 @@ class Backend(Protocol):
     def poll(self, client_id: str, cursors: dict[str, int]) -> dict[str, Any]: ...
 
     def unsubscribe(self, client_id: str, subscription_id: str) -> None: ...
+
+    def fetch_job_log(self, host: str, project: str, job_id: int) -> LogContent:
+        """A job's log, fetched by the daemon within its budget; ended jobs come from its cache."""
+        ...
+
+    def fetch_threads(self, ref: ResourceRef, ids: set[str]) -> dict[str, dict[str, Any]]:
+        """These discussions of the MR; one GitLab no longer has is left out."""
+        ...
 
     def begin_shutdown(self) -> None:
         """The watcher is stopping: from now on, never start a daemon."""
@@ -75,16 +86,16 @@ class DaemonBackend:
     def describe(self) -> str:
         return f"pid {self.hello.get('pid')}, endpoint {self.files.describe_endpoint()}, log {self.files.log}"
 
-    def _call(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _call(self, payload: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
         try:
-            response = request(self.files, payload)
+            response = request(self.files, payload, timeout=timeout)
         except DaemonUnavailable:
             if self._shutting_down:
                 raise
             # The daemon exited (idle, crash, or stopped by hand). Start a new one; subscriptions then come back
             # as unknown and the watcher subscribes again.
             self.hello = ensure_daemon(self.files)
-            response = request(self.files, payload)
+            response = request(self.files, payload, timeout=timeout)
         if not response.get("ok"):
             raise BackendError(str(response.get("error", "the daemon refused the request")))
         return response
@@ -97,6 +108,15 @@ class DaemonBackend:
 
     def poll(self, client_id: str, cursors: dict[str, int]) -> dict[str, Any]:
         return self._call({"op": "poll", "client_id": client_id, "cursors": cursors})
+
+    def fetch_job_log(self, host: str, project: str, job_id: int) -> LogContent:
+        payload = {"op": "fetch_job_log", "host": host, "project": project, "job_id": job_id}
+        return decode_log(self._call(payload, FETCH_TIMEOUT).get("log"))
+
+    def fetch_threads(self, ref: ResourceRef, ids: set[str]) -> dict[str, dict[str, Any]]:
+        payload = {"op": "fetch_threads", "resource": ref.to_wire(), "ids": sorted(ids)}
+        discussions = self._call(payload, FETCH_TIMEOUT).get("discussions")
+        return dict(discussions) if isinstance(discussions, dict) else {}
 
     def unsubscribe(self, client_id: str, subscription_id: str) -> None:
         """Best effort: one short attempt, never a spawn. If the daemon is gone, the lease expiry cleans up."""
@@ -145,8 +165,17 @@ class InProcessBackend:
         self._loop.call_soon_threadsafe(invoke)
         return future.result(timeout=30)
 
+    def _call_async(self, factory: Callable[[], Coroutine[Any, Any, T]]) -> T:
+        return asyncio.run_coroutine_threadsafe(factory(), self._loop).result(timeout=FETCH_TIMEOUT)
+
     def describe(self) -> str:
         return "in-process (--no-daemon), private budget"
+
+    def fetch_job_log(self, host: str, project: str, job_id: int) -> LogContent:
+        return self._call_async(lambda: self.engine.fetch_job_log(host, project, job_id))
+
+    def fetch_threads(self, ref: ResourceRef, ids: set[str]) -> dict[str, dict[str, Any]]:
+        return self._call_async(lambda: self.engine.fetch_threads(ref, ids))
 
     def subscribe(
         self, client_id: str, ref: ResourceRef, events: frozenset[str], logs: LogsMode, baseline: Any
@@ -188,9 +217,11 @@ class Watcher:
         changelog: Changelog,
         status: StatusOutput,
         *,
+        writer: ResourceWriter | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.settings = settings
+        self.writer = writer
         self.backend = backend
         self.sink = sink
         self.changelog = changelog
@@ -224,7 +255,7 @@ class Watcher:
     def _subscribe(self, resubscribe: bool) -> None:
         baseline = None
         if resubscribe:
-            stored = self.changelog.load_state()
+            stored = self.changelog.load_baseline()
             baseline = stored.snapshot if stored else None
         s = self.settings
         self._subscription, self._cursor = self.backend.subscribe(self.client_id, s.ref, s.events, s.logs, baseline)
@@ -248,7 +279,7 @@ class Watcher:
             deadline: float | None = self.clock() + self.settings.timeout
         else:
             deadline = None
-        stored = self.changelog.load_state()
+        stored = self.changelog.load_baseline()
         self._snapshot_hash = stored.snapshot_hash if stored else None
         # Continue the changelog's numbering, so events.jsonl stays strictly increasing across watcher runs too.
         self._seq = self.changelog.last_seq()
@@ -272,7 +303,9 @@ class Watcher:
                 if snapshot:
                     previous_hash = self._snapshot_hash
                     self._snapshot_hash = str(snapshot["hash"])
-                    self.changelog.save_state(self._snapshot_hash, snapshot.get("data"))
+                    self.changelog.save_baseline(self._snapshot_hash, snapshot.get("data"))
+                    if self.writer is not None:
+                        self.writer.snapshot(snapshot.get("data"))
                 else:
                     previous_hash = self._snapshot_hash
                 raw = [Event.from_json(e) for e in (response.get("events") or {}).get(self._subscription) or []]
@@ -288,6 +321,8 @@ class Watcher:
                         if not (e.kind == WATCH_STARTED and e.data.get("snapshot_hash") == previous_hash)
                     ]
                     resubscribed = False
+                if self.writer is not None:
+                    events = self.writer.attach(events)
                 events = [replace(e, seq=self._next_seq()) for e in events]
                 ended = next((e for e in events if e.kind == WATCH_ENDED), None)
                 hit = next((e for e in events if self.settings.until and e.kind == self.settings.until), None)
@@ -332,7 +367,7 @@ class Watcher:
         self.status.line(f"ended: {event.data.get('reason')}")
 
 
-def default_backend(no_daemon: bool, cache_root: Path) -> Backend:
+def default_backend(no_daemon: bool) -> Backend:
     if no_daemon:
-        return InProcessBackend(Engine(cache_root=cache_root))
+        return InProcessBackend(Engine())
     return DaemonBackend()

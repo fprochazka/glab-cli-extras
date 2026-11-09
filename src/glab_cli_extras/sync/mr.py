@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from glab_cli_extras.artifacts.threads import is_system_discussion
 from glab_cli_extras.gitlab import queries
 from glab_cli_extras.gitlab.client import GitLabClient, NotFound, encode_project
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.gitlab.values import gid_to_int, lower
 from glab_cli_extras.serde import stable_hash
+from glab_cli_extras.store.threads import is_system_discussion
 
 THREAD_LIST_THRESHOLD = 3
 """Above this many changed threads, one paginated list request is cheaper than one request per thread."""
@@ -113,6 +113,12 @@ def parse_mr(node: Any, project: str, threads: tuple[ThreadState, ...] | None) -
     )
 
 
+def thread_sig(thread: ThreadState) -> str:
+    """The version of a thread's published notes. It changes on a new note, an edit, a deletion, a resolve and an
+    unresolve, because each of these moves a note's `updatedAt` or the note list."""
+    return stable_hash((thread.resolved, [(n.id, n.updated_at) for n in thread.notes]))
+
+
 async def fetch_snapshot(
     client: GitLabClient, ref: ResourceRef, *, with_threads: bool, with_pipeline: bool
 ) -> MrSnapshot:
@@ -154,7 +160,11 @@ async def fetch_discussions(client: GitLabClient, ref: ResourceRef, ids: set[str
         return found if ids is None else {k: v for k, v in found.items() if k in ids}
     result = {}
     for discussion_id in sorted(ids):
-        discussion = await client.get_json(f"{base}/{discussion_id}", kind="discussion")
+        try:
+            discussion = await client.get_json(f"{base}/{discussion_id}", kind="discussion")
+        except NotFound:
+            # Deleted, or briefly gone after a force-push rewrote a diff note: the caller keeps what it has.
+            continue
         if isinstance(discussion, dict):
             result[discussion_id] = discussion
     return result

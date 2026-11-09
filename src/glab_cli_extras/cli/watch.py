@@ -12,17 +12,17 @@ from typing import Annotated, Any, NoReturn
 import typer
 
 from glab_cli_extras import __version__
-from glab_cli_extras.artifacts.job_logs import LOGS_MODES, LogsMode
 from glab_cli_extras.daemon.lifecycle import daemon_running, stop_daemon
 from glab_cli_extras.daemon.transport import DaemonFiles, DaemonUnavailable, request
 from glab_cli_extras.events import GROUPS, KINDS_BY_RESOURCE, LIFECYCLE_KINDS, FilterError, resolve_filter
 from glab_cli_extras.gitlab.glab import GlabNotFoundError
 from glab_cli_extras.gitlab.refs import RefError, ResourceRef, parse_id_ref, parse_repo_ref
-from glab_cli_extras.paths import default_changelog_root, user_cache_dir
+from glab_cli_extras.sync.job_logs import LOGS_MODES, LogsMode
 from glab_cli_extras.watch.changelog import Changelog
 from glab_cli_extras.watch.client import Backend, BackendError, Watcher, WatchSettings, default_backend
 from glab_cli_extras.watch.sinks import Sink, StatusOutput
 from glab_cli_extras.watch.streams import MESSAGE_PRIORITIES, STREAM_MODES, StreamError, open_stream
+from glab_cli_extras.watch.writer import ResourceWriter
 
 EXIT_USAGE = 2
 
@@ -74,8 +74,13 @@ StreamOpt = Annotated[
         help="auto picks claude-message inside a Claude Code session that accepts messages, else stdout.",
     ),
 ]
-ChangelogOpt = Annotated[
-    Path | None, typer.Option("--changelog-dir", help="Root dir of the events.jsonl and state.json files.")
+BaseDirOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--base-dir",
+        help="Where the resource dirs go (state.json, logs, threads, events.jsonl). "
+        "Default: <session scratchpad>/glab-cli-extras under Claude Code, else <temp dir>/glab-cli-extras-<uid>.",
+    ),
 ]
 UntilOpt = Annotated[str | None, typer.Option("--until", help="Stop after the first event of this kind.")]
 TimeoutOpt = Annotated[
@@ -144,6 +149,9 @@ def print_header(
     status.line(f"stream: {sink.describe()}")
     if fallback:
         status.line(f"stream fallback: not messaging the Claude Code session: {fallback}")
+    status.line(f"dir: {changelog.dir}")
+    if ref.kind in ("mr", "pipeline"):
+        status.line(f"state: {changelog.dir / 'state.json'}")
     status.line(f"changelog: {changelog.events_path}")
     status.line(f"events: {','.join(subscribed) or '(none)'} (always: {','.join(LIFECYCLE_KINDS)})")
     status.line(f"ignored: {','.join(ignored) or '(none)'}")
@@ -169,7 +177,7 @@ def run_watch(
     events: list[str] | None,
     exclude_events: list[str] | None,
     events_stream: str,
-    changelog_dir: Path | None,
+    base_dir: Path | None,
     until: str | None,
     timeout: str | None,
     no_daemon: bool,
@@ -201,13 +209,13 @@ def run_watch(
 
     status = StatusOutput()
     try:
-        stream = open_stream(events_stream, ref, message_priority, changelog_dir, default_changelog_root(), status)
+        stream = open_stream(events_stream, ref, message_priority, base_dir, status)
     except StreamError as exc:
         _fail(str(exc))
     changelog = stream.changelog
     logs_mode: LogsMode = logs if logs in LOGS_MODES else "failed"
     try:
-        backend = default_backend(no_daemon, user_cache_dir())
+        backend = default_backend(no_daemon)
     except (DaemonUnavailable, TimeoutError) as exc:
         _fail(f"cannot start the daemon: {exc}; retry with --no-daemon to poll without it", 1)
     print_header(
@@ -222,8 +230,14 @@ def run_watch(
         timeout,
         stream.fallback,
     )
+    writer = ResourceWriter(changelog.base, ref, backend, logs_mode, status)
     watcher = Watcher(
-        WatchSettings(ref, selected, logs_mode, until, timeout_s), backend, stream.sink, changelog, status
+        WatchSettings(ref, selected, logs_mode, until, timeout_s),
+        backend,
+        stream.sink,
+        changelog,
+        status,
+        writer=writer,
     )
     try:
         code = watcher.run()
@@ -241,7 +255,7 @@ def mr(
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
     events_stream: StreamOpt = "auto",
-    changelog_dir: ChangelogOpt = None,
+    base_dir: BaseDirOpt = None,
     message_priority: PriorityOpt = "next",
     no_daemon: NoDaemonOpt = False,
 ) -> None:
@@ -252,7 +266,7 @@ def mr(
         events=events,
         exclude_events=exclude_events,
         events_stream=events_stream,
-        changelog_dir=changelog_dir,
+        base_dir=base_dir,
         until=until,
         timeout=timeout,
         no_daemon=no_daemon,
@@ -270,7 +284,7 @@ def pipeline(
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
     events_stream: StreamOpt = "auto",
-    changelog_dir: ChangelogOpt = None,
+    base_dir: BaseDirOpt = None,
     message_priority: PriorityOpt = "next",
     no_daemon: NoDaemonOpt = False,
 ) -> None:
@@ -281,7 +295,7 @@ def pipeline(
         events=events,
         exclude_events=exclude_events,
         events_stream=events_stream,
-        changelog_dir=changelog_dir,
+        base_dir=base_dir,
         until=until,
         timeout=timeout,
         no_daemon=no_daemon,
@@ -298,7 +312,7 @@ def mrs(
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
     events_stream: StreamOpt = "auto",
-    changelog_dir: ChangelogOpt = None,
+    base_dir: BaseDirOpt = None,
     message_priority: PriorityOpt = "next",
     no_daemon: NoDaemonOpt = False,
 ) -> None:
@@ -309,7 +323,7 @@ def mrs(
         events=events,
         exclude_events=exclude_events,
         events_stream=events_stream,
-        changelog_dir=changelog_dir,
+        base_dir=base_dir,
         until=until,
         timeout=timeout,
         no_daemon=no_daemon,
@@ -326,7 +340,7 @@ def branch(
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
     events_stream: StreamOpt = "auto",
-    changelog_dir: ChangelogOpt = None,
+    base_dir: BaseDirOpt = None,
     message_priority: PriorityOpt = "next",
     no_daemon: NoDaemonOpt = False,
 ) -> None:
@@ -340,7 +354,7 @@ def branch(
         events=events,
         exclude_events=exclude_events,
         events_stream=events_stream,
-        changelog_dir=changelog_dir,
+        base_dir=base_dir,
         until=until,
         timeout=timeout,
         no_daemon=no_daemon,

@@ -37,14 +37,14 @@ def fake() -> FakeGlab:
 
 @pytest.fixture
 def ctx(fake: FakeGlab, clock: Clock, tmp_path: Path) -> PollContext:
-    return PollContext(GitLabClient(HOST, runner=fake, clock=clock), tmp_path / "cache", clock)
+    return PollContext(GitLabClient(HOST, runner=fake, clock=clock), clock)
 
 
 @pytest.fixture(autouse=True)
 def _isolated_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """No test may touch the real daemon, cache or Claude session."""
+    """No test may touch the real daemon, base dir or Claude session."""
     monkeypatch.setenv("GLAB_CLI_EXTRAS_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("GLAB_CLI_EXTRAS_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("GLAB_CLI_EXTRAS_BASE_DIR", str(tmp_path / "base"))
     for name in ("CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID"):
         monkeypatch.delenv(name, raising=False)
     yield

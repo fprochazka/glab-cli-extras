@@ -9,7 +9,7 @@ from fakeglab import FakeGlab, Route
 from glab_cli_extras.events import KINDS_BY_RESOURCE, RawEvent
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.resources.base import PollContext, PollerOptions
-from glab_cli_extras.resources.pipeline import PipelinePoller, diff_pipeline, parse_pipeline
+from glab_cli_extras.resources.pipeline import PipelinePoller, diff_pipeline, log_cache_key, parse_pipeline
 from glab_cli_extras.sync.job_logs import TAIL_BYTES
 from shapes import HOST, PROJECT, gql_downstream, gql_job, gql_pipeline
 
@@ -67,7 +67,7 @@ def test_retried_job_is_a_new_job() -> None:
 def _poller(fake: FakeGlab, clock: Clock, tmp_path: Path, options: PollerOptions = ALL) -> PipelinePoller:
     from glab_cli_extras.gitlab.client import GitLabClient
 
-    ctx = PollContext(GitLabClient(HOST, runner=fake, clock=clock), tmp_path / "cache", clock)
+    ctx = PollContext(GitLabClient(HOST, runner=fake, clock=clock), clock)
     return PipelinePoller(REF, ctx, options)
 
 
@@ -102,8 +102,11 @@ def test_poller_uses_the_etag_and_fetches_the_failed_log_tail(clock: Clock, tmp_
     clock.advance(6)
     events = asyncio.run(poller.poll())
     assert kinds(events) == ["job_finished"]
-    log_path = Path(events[0].artifacts[0])
-    assert log_path.read_text().endswith("ERROR: tests failed\n")
+    # The daemon writes no file: the log waits in its memory for the clients, which write it themselves.
+    assert events[0].artifacts == ()
+    assert events[0].data["project"] == PROJECT
+    cached = poller.ctx.logs.get(log_cache_key(HOST, 1))
+    assert cached is not None and cached.body.endswith(b"ERROR: tests failed\n")
     assert events[0].data["log_truncated"] is True
     trace_call = next(c for c in fake.calls if "trace" in c.endpoint)
     assert f"byte_offset={big - TAIL_BYTES}" in trace_call.endpoint

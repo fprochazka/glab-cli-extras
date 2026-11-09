@@ -174,20 +174,29 @@ def test_sender_name_drops_the_host() -> None:
 def test_stream_selection(receiver: Receiver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     status = StatusOutput()
     monkeypatch.setattr(streams, "find_session", lambda: None)
-    plain = streams.open_stream("auto", REF, "next", None, tmp_path / "default", status)
+    plain = streams.open_stream("auto", REF, "next", None, status)
     assert isinstance(plain.sink, StdoutSink)
-    assert plain.changelog.dir.is_relative_to(tmp_path / "default")
+    assert plain.changelog.dir.is_relative_to(tmp_path / "base")
     with pytest.raises(streams.StreamError, match="no Claude Code session found"):
-        streams.open_stream("claude-message", REF, "next", None, tmp_path / "default", status)
+        streams.open_stream("claude-message", REF, "next", None, status)
 
     scratchpad = tmp_path / "scratchpad"
+    monkeypatch.delenv("GLAB_CLI_EXTRAS_BASE_DIR")
     monkeypatch.setattr(streams, "find_session", lambda: fake_session(receiver.path, scratchpad))
-    chosen = streams.open_stream("auto", REF, "now", None, tmp_path / "default", status)
+    chosen = streams.open_stream("auto", REF, "now", None, status)
     assert isinstance(chosen.sink, ClaudeMessageSink) and chosen.sink.priority == "now"
     assert chosen.changelog.events_path == (
-        scratchpad / "glab-watch" / "gitlab.example.com" / "group" / "project" / "mr-42" / "events.jsonl"
+        scratchpad
+        / "glab-cli-extras"
+        / "gitlab.example.com"
+        / "group"
+        / "project"
+        / "-"
+        / "merge_requests"
+        / "42"
+        / "events.jsonl"
     )
-    forced = streams.open_stream("stdout", REF, "next", tmp_path / "explicit", tmp_path / "default", status)
+    forced = streams.open_stream("stdout", REF, "next", tmp_path / "explicit", status)
     assert isinstance(forced.sink, StdoutSink) and forced.changelog.dir.is_relative_to(tmp_path / "explicit")
 
 
@@ -205,19 +214,20 @@ def test_claude_messages_carry_the_watcher_numbering(tmp_path: Path) -> None:
 def test_an_incompatible_session_falls_back_to_stdout_with_a_reason(
     receiver: Receiver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("GLAB_CLI_EXTRAS_BASE_DIR")
     session = fake_session(receiver.path, tmp_path / "scratchpad")
     session.can_receive_messages = False
     reason = "messaging: the record speaks peer protocol 2, and this cc-blackbox version speaks 1."
     session.compatibility = SimpleNamespace(compatible=False, reasons=(reason,))
     monkeypatch.setattr(streams, "find_session", lambda: session)
     status = StatusOutput()
-    chosen = streams.open_stream("auto", REF, "next", None, tmp_path / "default", status)
+    chosen = streams.open_stream("auto", REF, "next", None, status)
     assert isinstance(chosen.sink, StdoutSink)
     assert chosen.fallback is not None and "peer protocol 2" in chosen.fallback
     # The changelog still goes to the scratchpad: only messaging is incompatible.
     assert chosen.changelog.dir.is_relative_to(tmp_path / "scratchpad")
     with pytest.raises(streams.StreamError, match="peer protocol 2"):
-        streams.open_stream("claude-message", REF, "next", None, tmp_path / "default", status)
+        streams.open_stream("claude-message", REF, "next", None, status)
 
 
 class RefusingSender:

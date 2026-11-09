@@ -5,12 +5,12 @@ from pathlib import Path
 import pytest
 
 from fakeglab import FakeGlab
-from glab_cli_extras.artifacts.threads import ThreadStore, render_discussion
 from glab_cli_extras.gitlab.refs import RefError, ResourceRef, parse_id_ref, parse_repo_ref
 from glab_cli_extras.paths import project_dir, sanitize_part
 from glab_cli_extras.resources.mr import MrSnapshot, parse_mr, parse_threads
 from glab_cli_extras.resources.pipeline import PipelineSnapshot, parse_pipeline
 from glab_cli_extras.serde import from_jsonable, stable_hash, to_jsonable
+from glab_cli_extras.store.threads import ThreadStore, render_discussion
 from shapes import HOST, PROJECT, gql_job, gql_mr, gql_pipeline, gql_thread, rest_discussion
 
 REPO_VIEW = {"id": 321, "path_with_namespace": PROJECT, "web_url": f"https://{HOST}/{PROJECT}"}

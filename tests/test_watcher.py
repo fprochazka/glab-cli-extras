@@ -10,6 +10,7 @@ from typing import Any
 
 from glab_cli_extras.events import Event
 from glab_cli_extras.gitlab.refs import ResourceRef
+from glab_cli_extras.sync.job_logs import LogContent
 from glab_cli_extras.watch.changelog import Changelog
 from glab_cli_extras.watch.client import Watcher, WatchSettings
 from glab_cli_extras.watch.sinks import StatusOutput, StdoutSink
@@ -49,6 +50,12 @@ class ScriptedBackend:
 
     def unsubscribe(self, client_id: str, subscription_id: str) -> None:
         pass
+
+    def fetch_job_log(self, host: str, project: str, job_id: int) -> LogContent:
+        raise AssertionError("no log expected")
+
+    def fetch_threads(self, ref: ResourceRef, ids: set[str]) -> dict[str, dict[str, Any]]:
+        raise AssertionError("no thread expected")
 
     def begin_shutdown(self) -> None:
         pass
