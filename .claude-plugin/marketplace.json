@@ -1,0 +1,21 @@
+{
+  "name": "fprochazka-glab-cli-extras",
+  "description": "GitLab for Claude Code through glab and glab-cli-extras: skills for merge requests, pipelines, discussions and watching, and a Bash guard",
+  "owner": {
+    "name": "Filip Procházka"
+  },
+  "plugins": [
+    {
+      "name": "glab",
+      "description": "GitLab through the glab CLI and glab-cli-extras: watch MRs and pipelines, read MR status, inspect pipelines, read and write discussions",
+      "version": "0.2.0",
+      "author": {
+        "name": "Filip Procházka",
+        "url": "https://github.com/fprochazka"
+      },
+      "source": "./coding-agent-plugins/claude-code",
+      "category": "integration",
+      "homepage": "https://github.com/fprochazka/glab-cli-extras"
+    }
+  ]
+}

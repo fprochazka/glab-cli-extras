@@ -34,6 +34,18 @@ From a local checkout:
 uv tool install --editable /path/to/glab-cli-extras
 ```
 
+## Claude Code plugin
+
+The repository is also a Claude Code plugin marketplace with one plugin, `glab`, which teaches an agent these commands and glab itself:
+
+```bash
+uv tool install glab-cli-extras
+claude plugin marketplace add fprochazka/glab-cli-extras --scope user
+claude plugin install glab@fprochazka-glab-cli-extras --scope user
+```
+
+The plugin carries the version of the package it ships with. It replaces the older `glab`, `glab-pipeline` and `glab-discussion` plugins; uninstall those first. See [its README](coding-agent-plugins/claude-code/README.md).
+
 ## Where files go
 
 All the commands write into the same tree, one dir per resource, so a file one command wrote is current for the others. The base dir is:

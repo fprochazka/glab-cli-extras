@@ -1,0 +1,13 @@
+{
+  "name": "glab",
+  "version": "0.2.0",
+  "description": "GitLab through the glab CLI and glab-cli-extras: watch MRs and pipelines, read MR status, inspect pipelines, read and write discussions",
+  "author": {
+    "name": "Filip Procházka",
+    "url": "https://github.com/fprochazka"
+  },
+  "homepage": "https://github.com/fprochazka/glab-cli-extras",
+  "repository": "https://github.com/fprochazka/glab-cli-extras",
+  "license": "MIT",
+  "keywords": ["gitlab", "glab", "merge-request", "pipeline", "ci", "code-review"]
+}
