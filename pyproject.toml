@@ -21,6 +21,11 @@ dependencies = [
   "typer>=0.15",
 ]
 
+[project.urls]
+Homepage = "https://github.com/fprochazka/glab-cli-extras"
+Repository = "https://github.com/fprochazka/glab-cli-extras"
+Issues = "https://github.com/fprochazka/glab-cli-extras/issues"
+
 [project.scripts]
 glab-watch = "glab_cli_extras.cli.watch:main"
 
