@@ -50,7 +50,8 @@ class MrSnapshot:
     web_url: str | None
     approved: bool | None
     approvals_left: int | None
-    approved_by: tuple[str, ...]
+    approved_by: tuple[str, ...] | None
+    """None when GitLab did not return the approvals (permissions, tier): unknown, not "nobody approved"."""
     reviewers: tuple[str, ...]
     head_pipeline_id: int | None = None
     head_pipeline_status: str | None = None
@@ -95,6 +96,12 @@ def parse_mr(node: Any, project: str, threads: tuple[ThreadState, ...] | None) -
     if not node:
         raise NotFound(f"merge request not found in {project}", 404)
     pipeline = node.get("headPipeline") or None
+    approved_by = node.get("approvedBy")
+    approvers = approved_by.get("nodes") if isinstance(approved_by, dict) else None
+    if isinstance(approvers, list):
+        approvers = [n for n in approvers if isinstance(n, dict) and "username" in n]
+    else:
+        approvers = None
     return MrSnapshot(
         iid=int(node["iid"]),
         project=project,
@@ -107,9 +114,9 @@ def parse_mr(node: Any, project: str, threads: tuple[ThreadState, ...] | None) -
         source_branch=node.get("sourceBranch"),
         target_branch=node.get("targetBranch"),
         web_url=node.get("webUrl"),
-        approved=node.get("approved"),
+        approved=node.get("approved") if approvers is not None else None,
         approvals_left=node.get("approvalsLeft"),
-        approved_by=tuple(sorted(n["username"] for n in (node.get("approvedBy") or {}).get("nodes") or [])),
+        approved_by=tuple(sorted(n["username"] for n in approvers)) if approvers is not None else None,
         reviewers=tuple(sorted(n["username"] for n in (node.get("reviewers") or {}).get("nodes") or [])),
         head_pipeline_id=gid_to_int(pipeline["id"]) if pipeline else None,
         head_pipeline_status=lower(pipeline.get("status")) if pipeline else None,

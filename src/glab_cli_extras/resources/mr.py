@@ -42,9 +42,14 @@ COMMENT_KINDS = GROUPS["comments"]
 
 
 def settle(prev: MrSnapshot | None, cur: MrSnapshot) -> MrSnapshot:
-    """Keep the last settled merge status while GitLab reports a transient one."""
-    if prev is not None and cur.merge_status in TRANSIENT_MERGE_STATUSES:
-        return replace(cur, merge_status=prev.merge_status)
+    """Keep the last settled merge status while GitLab reports a transient one, and the last known approvals while
+    GitLab does not return them, so a poll without approvals never reads as "every approval was removed"."""
+    if prev is None:
+        return cur
+    if cur.merge_status in TRANSIENT_MERGE_STATUSES:
+        cur = replace(cur, merge_status=prev.merge_status)
+    if cur.approved_by is None and prev.approved_by is not None:
+        cur = replace(cur, approved_by=prev.approved_by, approvals_left=prev.approvals_left, approved=prev.approved)
     return cur
 
 
@@ -117,7 +122,13 @@ def diff_mr(prev: MrSnapshot, cur: MrSnapshot) -> list[RawEvent]:
         events.append(RawEvent("pushed", {"from": prev.head_sha, "to": cur.head_sha}))
     if prev.merge_status != cur.merge_status and cur.merge_status:
         events.append(RawEvent("merge_status_changed", {"from": prev.merge_status, "to": cur.merge_status}))
-    if (prev.approved_by, prev.approvals_left, prev.approved) != (cur.approved_by, cur.approvals_left, cur.approved):
+    approvals_known = prev.approved_by is not None and cur.approved_by is not None
+    if approvals_known and (prev.approved_by, prev.approvals_left, prev.approved) != (
+        cur.approved_by,
+        cur.approvals_left,
+        cur.approved,
+    ):
+        assert prev.approved_by is not None and cur.approved_by is not None
         added, removed = _set_diff(prev.approved_by, cur.approved_by)
         events.append(
             RawEvent(
@@ -125,7 +136,7 @@ def diff_mr(prev: MrSnapshot, cur: MrSnapshot) -> list[RawEvent]:
                 {
                     "approved": cur.approved,
                     "approvals_left": cur.approvals_left,
-                    "approved_by": list(cur.approved_by),
+                    "approved_by": list(cur.approved_by or ()),
                     "added": added,
                     "removed": removed,
                 },
@@ -263,7 +274,7 @@ class MrPoller(Poller[MrSnapshot]):
             "web_url": snap.web_url,
             "approved": snap.approved,
             "approvals_left": snap.approvals_left,
-            "approved_by": list(snap.approved_by),
+            "approved_by": list(snap.approved_by) if snap.approved_by is not None else None,
             "reviewers": list(snap.reviewers),
         }
         if snap.head_pipeline_id is not None:

@@ -184,3 +184,18 @@ def test_premium_level_budget_halves_the_interval(clock: Clock, tmp_path: Path) 
     assert poller.next_delay() == 30.0
     poller.ctx.client.budget.limit_per_minute = 480
     assert poller.next_delay() == 15.0
+
+
+def test_approvals_gitlab_does_not_return_are_unknown_not_removed() -> None:
+    known = snap(approved_by=["reviewer-one"], approvals_left=0)
+    node = gql_mr(approved_by=["reviewer-one"])["project"]["mergeRequest"]
+    node["approvedBy"] = None
+    missing = parse_mr(node, PROJECT, None)
+    assert missing.approved_by is None and missing.approved is None
+    settled = settle(known, missing)
+    assert diff_mr(known, settled) == []
+    assert settled.approved_by == ("reviewer-one",)
+    # A snapshot that never knew the approvals compares with nothing.
+    assert [e.kind for e in diff_mr(missing, known)] == []
+    later = snap(approved_by=[], approvals_left=1)
+    assert [e.kind for e in diff_mr(settled, later)] == ["approvals_changed"]
