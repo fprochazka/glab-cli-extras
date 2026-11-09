@@ -48,3 +48,16 @@ Each command runs `glab-mr-status` for the MR of the current branch, as `glab` f
 - `/glab:overview`: the full MR state (pipeline, threads, external statuses) and what blocks the merge, without taking any action.
 - `/glab:comments`: the threads, unresolved and resolved, with a proposal for each. It re-reads the resolved threads, because AI reviewers post findings that land there and a resolved thread does not prove the problem is fixed.
 - `/glab:pipeline`: the pipeline dump, the failed jobs triaged and fixes proposed, reading the summary first and then only the files it points at.
+
+## Hooks
+
+- **PreToolUse, Bash**: `hooks/run-cc-hook.sh` runs `glab-cli-extras-cc-hook`, which denies inspecting pipelines and job logs with `glab ci view|get|trace` or the raw API, and reading or writing MR discussions with `glab api`, `glab mr view --comments` or `glab mr note`. The deny names the skill and the command to use instead. The wrapper always exits 0: when the command is missing or crashes, a Bash call goes through as if there were no guard, and the crash shows in `claude --debug`.
+- **SessionStart**: `hooks/check-glab-cli-extras.sh` prints nothing when all is well. Otherwise it asks the agent to tell you, with the command that fixes it, when glab-cli-extras is not installed, when it is older than the plugin or lacks a command the plugin uses, or when `glab-pipeline` or `glab-discussion` on `PATH` still comes from the deprecated standalone packages.
+
+## Permissions
+
+The skills pre-approve the read-only commands they run in their `allowed-tools`: `glab-mr-status`, `glab-discussion read`, `glab-pipeline inspect`, and the read-only `glab` subcommands and `--help` pages. The mr-status skill also pre-approves `glab api`, which covers writes through the API too. The `comments` command carries `glab-discussion` in full, because it replies to and resolves threads, and the `pipeline` command carries `glab-pipeline` in full. Everything else, `glab-watch` included, asks the first time. To allow the skills to load without a prompt, add `Skill(glab)` and the other skill names to `permissions.allow` in your settings.
+
+## License
+
+MIT

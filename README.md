@@ -346,7 +346,7 @@ The exit code is 0 for a baseline or a read, 5 when no MR could be read, 1 for a
 
 `glab-cli-extras-cc-hook` is a PreToolUse hook for the Bash tool. It denies a command that inspects pipelines, jobs or job logs with `glab ci view|get|trace` or the raw API (`glab api projects/…/pipelines/…`, `…/jobs/…/trace`, `…/ci/lint`), or that reads or writes MR discussions with `glab api …/notes|discussions|draft_notes`, `glab mr view --comments` or `glab mr note`. The deny reason names the rule that matched, the command to use instead and the skill that teaches it. Actions stay allowed: `glab ci list`, `glab ci status`, `glab ci run`, `glab ci retry`, the pipelines list endpoint, award emoji. The rules ship in the package, in `glab_cli_extras/cc_hook/rules/`.
 
-To register it, add it to a Claude Code settings file:
+The `glab` plugin registers it, through a wrapper that never blocks a Bash call when the command is missing or crashes. To register it without the plugin, add it to a Claude Code settings file:
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "glab-cli-extras-cc-hook", "timeout": 10}]}]}}
