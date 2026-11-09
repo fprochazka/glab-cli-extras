@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from glab_cli_extras import __version__
+from glab_cli_extras.cli.deprecated import warn_if_installed
 from glab_cli_extras.cli.stdio import force_utf8_stdio
 from glab_cli_extras.gitlab.client import ApiError
 from glab_cli_extras.gitlab.glab import GlabNotFoundError
@@ -220,6 +221,7 @@ def _run_inspect(args: argparse.Namespace, parser: argparse.ArgumentParser) -> i
 
 def main(argv: list[str] | None = None) -> int:
     force_utf8_stdio()
+    warn_if_installed("glab-pipeline")
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command != "inspect":

@@ -9,6 +9,7 @@ import argparse
 import sys
 
 from glab_cli_extras import __version__
+from glab_cli_extras.cli.deprecated import warn_if_installed
 from glab_cli_extras.cli.stdio import force_utf8_stdio
 from glab_cli_extras.discussion.checks import CheckError
 from glab_cli_extras.discussion.context import ContextError
@@ -169,6 +170,7 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None
 
 def main(argv: list[str] | None = None) -> None:
     force_utf8_stdio()
+    warn_if_installed("glab-discussion")
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

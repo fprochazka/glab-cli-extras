@@ -10,6 +10,8 @@ Extra commands for the [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`),
 
 This package supersedes the standalone [glab-pipeline](https://github.com/fprochazka/glab-pipeline) and [glab-discussion](https://github.com/fprochazka/glab-discussion) packages: their commands live here, with the same options and output.
 
+Those two packages are deprecated. When one of them is still installed next to glab-cli-extras, its command prints one line on stderr before it runs, with the commands that replace it: `uv tool uninstall glab-pipeline && uv tool install glab-cli-extras`. Stdout and the exit code stay the same.
+
 Every GitLab request goes through `glab api`, so `glab` handles authentication, hosts, OAuth refresh, proxies and certificates. No command reads or stores a token.
 
 ## Install
