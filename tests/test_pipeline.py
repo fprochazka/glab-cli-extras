@@ -6,11 +6,11 @@ from pathlib import Path
 
 from conftest import Clock
 from fakeglab import FakeGlab, Route
-from glab_cli_extras.artifacts.job_logs import TAIL_BYTES
 from glab_cli_extras.events import KINDS_BY_RESOURCE, RawEvent
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.resources.base import PollContext, PollerOptions
 from glab_cli_extras.resources.pipeline import PipelinePoller, diff_pipeline, parse_pipeline
+from glab_cli_extras.sync.job_logs import TAIL_BYTES
 from shapes import HOST, PROJECT, gql_downstream, gql_job, gql_pipeline
 
 REF = ResourceRef("pipeline", HOST, PROJECT, 5001)

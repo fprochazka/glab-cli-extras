@@ -12,126 +12,33 @@ changes and single resolves never touch it.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any, ClassVar
 
-from glab_cli_extras.artifacts.threads import ThreadStore, is_system_discussion
+from glab_cli_extras.artifacts.threads import ThreadStore
 from glab_cli_extras.events import GROUPS, PIPELINE_KINDS, RawEvent
-from glab_cli_extras.gitlab import queries
-from glab_cli_extras.gitlab.client import NotFound, encode_project
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.paths import project_dir
-from glab_cli_extras.resources.base import Poller, PollerOptions, gid_to_int, is_force_push, lower
-from glab_cli_extras.serde import stable_hash
+from glab_cli_extras.resources.base import Poller, PollerOptions, is_force_push
+from glab_cli_extras.sync.mr import (
+    MrSnapshot,
+    NoteState,
+    ThreadState,
+    fetch_discussions,
+    fetch_snapshot,
+    parse_mr,
+    parse_threads,
+)
 
 log = logging.getLogger(__name__)
 
 TRANSIENT_MERGE_STATUSES = frozenset({"checking", "unchecked", "preparing"})
 """GitLab reports these while it recomputes mergeability; the last settled value stays until a new one arrives."""
 TERMINAL_STATES = frozenset({"merged", "closed"})
-THREAD_LIST_THRESHOLD = 3
-"""Above this many changed threads, one paginated list request is cheaper than one request per thread."""
 INTERVAL = 30.0
 INTERVAL_PREMIUM = 15.0
-MAX_THREAD_PAGES = 10
 
 COMMENT_KINDS = GROUPS["comments"]
-
-
-@dataclass(frozen=True, slots=True)
-class NoteState:
-    id: int
-    updated_at: str
-    author: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class ThreadState:
-    id: str
-    resolvable: bool
-    resolved: bool
-    notes: tuple[NoteState, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class MrSnapshot:
-    iid: int
-    project: str
-    state: str
-    title: str
-    description_hash: str
-    draft: bool
-    merge_status: str | None
-    head_sha: str | None
-    source_branch: str | None
-    target_branch: str | None
-    web_url: str | None
-    approved: bool | None
-    approvals_left: int | None
-    approved_by: tuple[str, ...]
-    reviewers: tuple[str, ...]
-    head_pipeline_id: int | None = None
-    head_pipeline_status: str | None = None
-    head_pipeline_project: str | None = None
-    threads: tuple[ThreadState, ...] | None = None
-    """None when no subscriber wants comment events, so the query leaves discussions out."""
-
-
-def _discussion_id(gid: Any) -> str:
-    """GraphQL `gid://gitlab/Discussion/<sha>` → the REST discussion id `<sha>`."""
-    return str(gid).rsplit("/", 1)[-1]
-
-
-def parse_threads(nodes: list[Any]) -> tuple[ThreadState, ...]:
-    threads = []
-    for node in nodes:
-        notes = (node.get("notes") or {}).get("nodes") or []
-        if notes and all(n.get("system") for n in notes):
-            continue
-        threads.append(
-            ThreadState(
-                id=_discussion_id(node["id"]),
-                resolvable=bool(node.get("resolvable")),
-                resolved=bool(node.get("resolved")),
-                notes=tuple(
-                    NoteState(
-                        id=gid_to_int(n["id"]),
-                        updated_at=str(n.get("updatedAt") or ""),
-                        author=(n.get("author") or {}).get("username"),
-                    )
-                    for n in notes
-                    if not n.get("system")
-                ),
-            )
-        )
-    return tuple(sorted(threads, key=lambda t: t.id))
-
-
-def parse_mr(node: Any, project: str, threads: tuple[ThreadState, ...] | None) -> MrSnapshot:
-    if not node:
-        raise NotFound(f"merge request not found in {project}", 404)
-    pipeline = node.get("headPipeline") or None
-    return MrSnapshot(
-        iid=int(node["iid"]),
-        project=project,
-        state=lower(node.get("state")),
-        title=str(node.get("title") or ""),
-        description_hash=stable_hash(str(node.get("description") or "")),
-        draft=bool(node.get("draft")),
-        merge_status=lower(node.get("detailedMergeStatus")) or None,
-        head_sha=node.get("diffHeadSha"),
-        source_branch=node.get("sourceBranch"),
-        target_branch=node.get("targetBranch"),
-        web_url=node.get("webUrl"),
-        approved=node.get("approved"),
-        approvals_left=node.get("approvalsLeft"),
-        approved_by=tuple(sorted(n["username"] for n in (node.get("approvedBy") or {}).get("nodes") or [])),
-        reviewers=tuple(sorted(n["username"] for n in (node.get("reviewers") or {}).get("nodes") or [])),
-        head_pipeline_id=gid_to_int(pipeline["id"]) if pipeline else None,
-        head_pipeline_status=lower(pipeline.get("status")) if pipeline else None,
-        head_pipeline_project=((pipeline.get("project") or {}).get("fullPath") or project) if pipeline else None,
-        threads=threads,
-    )
 
 
 def settle(prev: MrSnapshot | None, cur: MrSnapshot) -> MrSnapshot:
@@ -261,10 +168,6 @@ class MrPoller(Poller[MrSnapshot]):
     def _wants_pipeline(self) -> bool:
         return self.options.wants("head_pipeline_changed", *PIPELINE_KINDS)
 
-    @property
-    def _encoded(self) -> str:
-        return encode_project(self.ref.project)
-
     def thread_store(self, web_url: str | None) -> ThreadStore:
         if self._threads is None:
             directory = (
@@ -275,68 +178,25 @@ class MrPoller(Poller[MrSnapshot]):
         return self._threads
 
     async def _fetch_snapshot(self) -> MrSnapshot:
-        with_threads = self._wants_threads
-        variables: dict[str, str | int | bool] = {
-            "project": self.ref.project,
-            "iid": str(self.ref.id),
-            "withThreads": with_threads,
-            "withPipeline": self._wants_pipeline,
-        }
-        result = await self.ctx.client.graphql(queries.load("mr"), variables, kind="mr")
-        node = ((result.data or {}).get("project") or {}).get("mergeRequest")
-        if not node:
-            raise NotFound(f"merge request !{self.ref.id} not found in {self.ref.project}", 404)
-        threads: tuple[ThreadState, ...] | None = None
-        if with_threads:
-            connection = node.get("discussions") or {}
-            nodes = list(connection.get("nodes") or [])
-            pages = 1
-            while (connection.get("pageInfo") or {}).get("hasNextPage") and pages < MAX_THREAD_PAGES:
-                variables["threadsAfter"] = str(connection["pageInfo"]["endCursor"])
-                more = await self.ctx.client.graphql(queries.load("mr"), variables, kind="mr")
-                connection = (
-                    (((more.data or {}).get("project") or {}).get("mergeRequest") or {}).get("discussions")
-                ) or {}
-                nodes.extend(connection.get("nodes") or [])
-                pages += 1
-            threads = parse_threads(nodes)
-        return parse_mr(node, self.ref.project, threads)
+        return await fetch_snapshot(
+            self.ctx.client, self.ref, with_threads=self._wants_threads, with_pipeline=self._wants_pipeline
+        )
 
     async def _is_force_push(self, old_sha: str, new_sha: str) -> tuple[bool, str | None]:
         return await is_force_push(self.ctx.client, self.ref.project, old_sha, new_sha)
 
     async def _sync_all_threads(self, store: ThreadStore) -> dict[str, str]:
-        paths: dict[str, str] = {}
-        page = 1
-        while page <= MAX_THREAD_PAGES:
-            batch = await self.ctx.client.get_json(
-                f"projects/{self._encoded}/merge_requests/{self.ref.id}/discussions",
-                {"per_page": 100, "page": page},
-                kind="discussions",
-            )
-            if not isinstance(batch, list) or not batch:
-                break
-            for discussion in batch:
-                if isinstance(discussion, dict) and not is_system_discussion(discussion):
-                    path, _ = store.write(discussion)
-                    paths[str(discussion["id"])] = str(path)
-            if len(batch) < 100:
-                break
-            page += 1
-        return paths
+        return self._write_threads(store, await fetch_discussions(self.ctx.client, self.ref, None))
 
     async def _sync_threads(self, store: ThreadStore, ids: set[str]) -> dict[str, str]:
-        if len(ids) > THREAD_LIST_THRESHOLD:
-            return await self._sync_all_threads(store)
+        return self._write_threads(store, await fetch_discussions(self.ctx.client, self.ref, ids))
+
+    @staticmethod
+    def _write_threads(store: ThreadStore, discussions: dict[str, Any]) -> dict[str, str]:
         paths = {}
-        for discussion_id in sorted(ids):
-            discussion = await self.ctx.client.get_json(
-                f"projects/{self._encoded}/merge_requests/{self.ref.id}/discussions/{discussion_id}",
-                kind="discussion",
-            )
-            if isinstance(discussion, dict):
-                path, _ = store.write(discussion)
-                paths[discussion_id] = str(path)
+        for discussion_id, discussion in discussions.items():
+            path, _ = store.write(discussion)
+            paths[discussion_id] = str(path)
         return paths
 
     async def poll(self) -> list[RawEvent]:
@@ -443,3 +303,6 @@ class MrPoller(Poller[MrSnapshot]):
 
     def child_options(self, child: ResourceRef) -> PollerOptions | None:
         return PollerOptions(self.options.events & frozenset(PIPELINE_KINDS), self.options.logs)
+
+
+__all__ = ["MrPoller", "MrSnapshot", "NoteState", "ThreadState", "diff_mr", "parse_mr", "parse_threads", "settle"]

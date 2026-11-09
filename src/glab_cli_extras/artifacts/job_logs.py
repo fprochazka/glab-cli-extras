@@ -9,17 +9,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
-from glab_cli_extras.gitlab.client import GitLabClient, encode_project
+from glab_cli_extras.gitlab.client import GitLabClient
 from glab_cli_extras.paths import project_dir, sanitize_part
 from glab_cli_extras.store.atomic import atomic_write_bytes
+from glab_cli_extras.sync.job_logs import TAIL_BYTES, fetch_log_content
 
 LogsMode = Literal["failed", "all", "none"]
 LOGS_MODES: tuple[LogsMode, ...] = ("failed", "all", "none")
-TAIL_BYTES = 500 * 1024
-"""GitLab's `Gitlab::Ci::Trace::Stream::LIMIT_SIZE`, the largest `byte_limit` it accepts."""
-BYTE_OFFSET_MIN_VERSION = (19, 0)
 
 
 def merge_logs_modes(modes: list[LogsMode]) -> LogsMode:
@@ -50,19 +48,6 @@ def log_path(cache_root: Path, host: str, project: str, job_id: int, job_name: s
     return project_dir(cache_root, host, project) / "jobs" / f"{job_id}-{sanitize_part(job_name)[:80]}.log"
 
 
-def _trace_size(job: Any) -> int | None:
-    if not isinstance(job, dict):
-        return None
-    for artifact in job.get("artifacts") or []:
-        if (
-            isinstance(artifact, dict)
-            and artifact.get("file_type") == "trace"
-            and isinstance(artifact.get("size"), int)
-        ):
-            return int(artifact["size"])
-    return None
-
-
 async def fetch_job_log(
     client: GitLabClient,
     cache_root: Path,
@@ -75,18 +60,7 @@ async def fetch_job_log(
     path = log_path(cache_root, client.host, project, job_id, job_name)
     if path.is_file():
         return FetchedLog(path, path.read_bytes().startswith(b"[glab-watch: last "), known_size, True)
-    encoded = encode_project(project)
-    version = await client.version()
-    tail_supported = version is not None and version >= BYTE_OFFSET_MIN_VERSION
-    size = known_size
-    if size is None and tail_supported:
-        size = _trace_size(await client.get_json(f"projects/{encoded}/jobs/{job_id}", kind="job"))
-    params: dict[str, str | int] = {}
-    truncated = False
-    if tail_supported and size is not None and size > TAIL_BYTES:
-        params = {"byte_offset": size - TAIL_BYTES, "byte_limit": TAIL_BYTES}
-        truncated = True
-    response = await client.get(f"projects/{encoded}/jobs/{job_id}/trace", params, kind="trace")
-    header = f"[glab-watch: last {TAIL_BYTES} of {size} bytes]\n".encode() if truncated else b""
-    atomic_write_bytes(path, header + response.body)
-    return FetchedLog(path, truncated, size, False)
+    content = await fetch_log_content(client, project, job_id, known_size)
+    header = f"[glab-watch: last {TAIL_BYTES} of {content.size} bytes]\n".encode() if content.truncated else b""
+    atomic_write_bytes(path, header + content.body)
+    return FetchedLog(path, content.truncated, content.size, False)
