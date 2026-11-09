@@ -50,6 +50,10 @@ class Backend(Protocol):
 
     def unsubscribe(self, client_id: str, subscription_id: str) -> None: ...
 
+    def begin_shutdown(self) -> None:
+        """The watcher is stopping: from now on, never start a daemon."""
+        ...
+
     def close(self) -> None: ...
 
 
@@ -66,6 +70,7 @@ class DaemonBackend:
     def __init__(self, files: DaemonFiles | None = None) -> None:
         self.files = files or DaemonFiles.default()
         self.hello = ensure_daemon(self.files)
+        self._shutting_down = False
 
     def describe(self) -> str:
         return f"pid {self.hello.get('pid')}, endpoint {self.files.describe_endpoint()}, log {self.files.log}"
@@ -74,6 +79,8 @@ class DaemonBackend:
         try:
             response = request(self.files, payload)
         except DaemonUnavailable:
+            if self._shutting_down:
+                raise
             # The daemon exited (idle, crash, or stopped by hand). Start a new one; subscriptions then come back
             # as unknown and the watcher subscribes again.
             self.hello = ensure_daemon(self.files)
@@ -92,7 +99,13 @@ class DaemonBackend:
         return self._call({"op": "poll", "client_id": client_id, "cursors": cursors})
 
     def unsubscribe(self, client_id: str, subscription_id: str) -> None:
-        self._call({"op": "unsubscribe", "client_id": client_id, "subscription_id": subscription_id})
+        """Best effort: one short attempt, never a spawn. If the daemon is gone, the lease expiry cleans up."""
+        payload = {"op": "unsubscribe", "client_id": client_id, "subscription_id": subscription_id}
+        with contextlib.suppress(DaemonUnavailable, OSError, ValueError):
+            request(self.files, payload, timeout=1.0)
+
+    def begin_shutdown(self) -> None:
+        self._shutting_down = True
 
     def close(self) -> None:
         pass
@@ -147,6 +160,9 @@ class InProcessBackend:
     def unsubscribe(self, client_id: str, subscription_id: str) -> None:
         self._call(lambda: self.engine.unsubscribe(client_id, subscription_id))
 
+    def begin_shutdown(self) -> None:
+        pass
+
     def close(self) -> None:
         stop = self._stop
         if stop is not None:
@@ -192,6 +208,7 @@ class Watcher:
 
     def request_stop(self, reason: str = "stopped") -> None:
         self._stop_reason = reason
+        self.backend.begin_shutdown()
         self._wakeup.set()
 
     def _install_signal_handlers(self) -> None:
@@ -296,10 +313,15 @@ class Watcher:
                     wait = min(wait, flush_in)
                 self._wakeup.wait(wait)
         except (BackendError, DaemonUnavailable) as exc:
+            if self._stop_reason is not None:
+                # Stopped while a request was in flight, and the daemon is gone: end like any other stop.
+                self._finish(self._end_event(self._stop_reason))
+                return EXIT_OK
             self.status.line(f"error: {exc}")
             exit_code = EXIT_ERROR
             return exit_code
         finally:
+            self.backend.begin_shutdown()
             if self._subscription is not None:
                 with contextlib.suppress(BackendError, DaemonUnavailable, OSError, TimeoutError):
                     self.backend.unsubscribe(self.client_id, self._subscription)

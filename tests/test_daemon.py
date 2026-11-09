@@ -306,3 +306,26 @@ def test_killing_a_watchers_whole_process_tree_leaves_the_shared_daemon_running(
     assert "daemon restarted" not in err
     assert daemon_request(daemon_env.files, {"op": "hello"})["pid"] == daemon_pid
     assert daemon_env.files.log.read_text().count("daemon 0.1.0 started") == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses SIGSTOP and SIGTERM")
+def test_a_stopping_watcher_never_starts_a_daemon(daemon_env: DaemonEnv) -> None:
+    _running_pipeline(daemon_env)
+    watch = _watch(
+        ["pipeline", PIPELINE_URL, "--events-stream=stdout", "--changelog-dir", str(daemon_env.root / "c")],
+        daemon_env.env(),
+    )
+    assert watch.stdout is not None and json.loads(watch.stdout.readline())["kind"] == "watch_started"
+    # Freeze the watcher so it cannot poll in between, take the daemon away, then stop the watcher.
+    os.kill(watch.pid, signal.SIGSTOP)
+    daemon_pid = daemon_request(daemon_env.files, {"op": "hello"})["pid"]
+    os.kill(daemon_pid, signal.SIGKILL)
+    wait_for(lambda: not daemon_running(daemon_env.files), 10, "the daemon to die")
+    os.kill(watch.pid, signal.SIGTERM)
+    os.kill(watch.pid, signal.SIGCONT)
+    rest, err = watch.communicate(timeout=30)
+    assert watch.returncode == 0, err
+    assert json.loads(rest.splitlines()[-1])["data"]["reason"] == "signal SIGTERM"
+    time.sleep(1.0)
+    assert not daemon_running(daemon_env.files), "the stopping watcher started a new daemon"
+    assert daemon_env.files.log.read_text().count("daemon 0.1.0 started") == 1

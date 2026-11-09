@@ -50,6 +50,9 @@ class ScriptedBackend:
     def unsubscribe(self, client_id: str, subscription_id: str) -> None:
         pass
 
+    def begin_shutdown(self) -> None:
+        pass
+
     def close(self) -> None:
         pass
 
