@@ -158,3 +158,13 @@ def test_a_read_after_a_watch_finds_the_watchs_files_current(
     assert out == [f"Discussions: {threads_dir(tmp_path)}/", "  (2 discussions up to date)"]
     assert {p.name: p.read_bytes() for p in threads_dir(tmp_path).glob("*.txt")} == written
     assert [c.endpoint for c in gitlab.fake.calls if "discussions" in c.endpoint] == []
+
+
+def test_a_body_with_a_signature_line_reaches_the_thread_file_byte_for_byte(
+    gitlab: Gitlab, clock: Clock, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    signed = "Fixed in the last push.\n\n<!-- sdlc:mr-babysit -->\n"
+    gitlab.discussions[A] = rest_discussion(A, [(1, "reviewer-one", signed)])
+    run_read(gitlab, clock, capsys)
+    content = next(p for p in threads_dir(tmp_path).glob("*.txt") if A[:12] in p.name).read_bytes()
+    assert f"(note:1):\n{signed}\n".encode() in content

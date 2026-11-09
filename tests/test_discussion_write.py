@@ -14,6 +14,15 @@ VERSIONS = [
 ]
 
 
+DISCUSSION = "abc" + "0" * 37
+# Line 10 of src/a.py is removed, new line 42 is added, the lines around them are context.
+DIFF = "@@ -10,2 +10,1 @@\n-gone\n keep\n@@ -40,2 +41,3 @@\n a\n+b\n c\n"
+
+
+def _version_detail(version: dict) -> dict:
+    return {**version, "diffs": [{"old_path": "src/a.py", "new_path": "src/a.py", "diff": DIFF}]}
+
+
 def _args(**overrides) -> Namespace:
     values = {
         "body": "Comment text",
@@ -40,11 +49,14 @@ def mock_api(mr_context: MrContext):
     def respond(endpoint: str, **kwargs):
         if endpoint.endswith("/versions"):
             return VERSIONS
+        if "/versions/" in endpoint:
+            return _version_detail(next(v for v in VERSIONS if endpoint.endswith(f"/versions/{v['id']}")))
         if endpoint.endswith("/draft_notes"):
-            return {"id": 501}
+            return {"id": 501, "position": kwargs["json_body"].get("position")}
         if endpoint.endswith("/notes"):
             return {"id": 9001}
-        return {"id": "d" * 40, "notes": [{"id": 9002}]}
+        note_type = "DiffNote" if "position" in kwargs["json_body"] else None
+        return {"id": "d" * 40, "notes": [{"id": 9002, "type": note_type}]}
 
     with (
         patch("glab_cli_extras.discussion.write.resolve_mr_context", return_value=mr_context),
@@ -86,15 +98,15 @@ class TestWriteNormal:
         assert f"Created discussion {'d' * 40} (note:9002)" in capsys.readouterr().out
 
     def test_reply(self, capsys, mock_api) -> None:
-        run(_args(reply_to="abc"))
+        run(_args(reply_to=DISCUSSION))
 
         mock_api.assert_called_once_with(
-            "projects/42/merge_requests/7/discussions/abc/notes",
+            f"projects/42/merge_requests/7/discussions/{DISCUSSION}/notes",
             method="POST",
             json_body={"body": "Comment text"},
             hostname="gitlab.example.com",
         )
-        assert "Replied to discussion abc (note:9001)" in capsys.readouterr().out
+        assert f"Replied to discussion {DISCUSSION} (note:9001)" in capsys.readouterr().out
 
     def test_diff_note(self, capsys, mock_api) -> None:
         run(_args(file="src/a.py", new_line=42))
@@ -109,7 +121,7 @@ class TestWriteNormal:
 
     def test_resolve_needs_draft(self, capsys, mock_api) -> None:
         with pytest.raises(SystemExit) as exc_info:
-            run(_args(reply_to="abc", resolve=True))
+            run(_args(reply_to=DISCUSSION, resolve=True))
         assert exc_info.value.code == 1
         assert "--resolve works only on a draft reply" in capsys.readouterr().err
         mock_api.assert_not_called()
@@ -129,23 +141,23 @@ class TestWriteDraft:
         assert "Created draft:501 (new thread)" in capsys.readouterr().out
 
     def test_reply(self, capsys, mock_api) -> None:
-        run(_args(draft=True, reply_to="abc"))
+        run(_args(draft=True, reply_to=DISCUSSION))
 
         mock_api.assert_called_once_with(
             "projects/42/merge_requests/7/draft_notes",
             method="POST",
-            json_body={"note": "Comment text", "in_reply_to_discussion_id": "abc"},
+            json_body={"note": "Comment text", "in_reply_to_discussion_id": DISCUSSION},
             hostname="gitlab.example.com",
         )
-        assert "Created draft:501 (reply to discussion abc)" in capsys.readouterr().out
+        assert f"Created draft:501 (reply to discussion {DISCUSSION})" in capsys.readouterr().out
 
     def test_reply_resolve(self, capsys, mock_api) -> None:
-        run(_args(draft=True, reply_to="abc", resolve=True))
+        run(_args(draft=True, reply_to=DISCUSSION, resolve=True))
 
         mock_api.assert_called_once_with(
             "projects/42/merge_requests/7/draft_notes",
             method="POST",
-            json_body={"note": "Comment text", "in_reply_to_discussion_id": "abc", "resolve_discussion": True},
+            json_body={"note": "Comment text", "in_reply_to_discussion_id": DISCUSSION, "resolve_discussion": True},
             hostname="gitlab.example.com",
         )
         assert "resolves the thread" in capsys.readouterr().out
@@ -155,6 +167,7 @@ class TestWriteDraft:
 
         assert mock_api.call_args_list == [
             call("projects/42/merge_requests/7/versions", hostname="gitlab.example.com"),
+            call("projects/42/merge_requests/7/versions/2", hostname="gitlab.example.com"),
             call(
                 "projects/42/merge_requests/7/draft_notes",
                 method="POST",

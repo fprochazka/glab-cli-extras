@@ -14,6 +14,7 @@ from glab_cli_extras.gitlab import sync_api
 HOST = "gitlab.example.com"
 MR_URL = f"https://{HOST}/group/project/-/merge_requests/7"
 MR_PATH = "projects/group%2Fproject/merge_requests/7"
+DISCUSSION = "abc" + "0" * 37
 SIGNED_BODY = "Fixed in the last push.\n\n<!-- sdlc:mr-babysit -->\n"
 """A body as agents post it: the signature on the last line, then a newline. Both must reach GitLab byte for byte."""
 
@@ -41,13 +42,13 @@ def writes(fake: FakeGlab) -> list[tuple[str, str, Any]]:
 def test_a_reply_goes_as_json_on_stdin_byte_for_byte(
     fake: FakeGlab, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fake.routes = [Route(f"{MR_PATH}/discussions/abc/notes", {"id": 501}, status=201)]
-    run("write", "--reply-to", "abc", "--body", "-", stdin=SIGNED_BODY, monkeypatch=monkeypatch)
+    fake.routes = [Route(f"{MR_PATH}/discussions/{DISCUSSION}/notes", {"id": 501}, status=201)]
+    run("write", "--reply-to", DISCUSSION, "--body", "-", stdin=SIGNED_BODY, monkeypatch=monkeypatch)
     call = fake.calls[0]
-    assert (call.method, call.endpoint) == ("POST", f"{MR_PATH}/discussions/abc/notes")
+    assert (call.method, call.endpoint) == ("POST", f"{MR_PATH}/discussions/{DISCUSSION}/notes")
     assert call.stdin is not None and call.body == {"body": SIGNED_BODY}
     assert "--input" in call.args and "-f" not in call.args and "-F" not in call.args
-    assert capsys.readouterr().out == f"Replied to discussion abc (note:501) - {MR_URL}#note_501\n"
+    assert capsys.readouterr().out == f"Replied to discussion {DISCUSSION} (note:501) - {MR_URL}#note_501\n"
 
 
 def test_a_failed_write_is_never_retried(fake: FakeGlab, capsys: pytest.CaptureFixture[str]) -> None:
@@ -60,10 +61,10 @@ def test_a_failed_write_is_never_retried(fake: FakeGlab, capsys: pytest.CaptureF
 
 
 def test_resolve_sends_a_json_boolean_and_names_the_mr(fake: FakeGlab, capsys: pytest.CaptureFixture[str]) -> None:
-    fake.routes = [Route(f"{MR_PATH}/discussions/abc", {"id": "abc"})]
-    run("resolve", "abc")
-    assert writes(fake) == [("PUT", f"{MR_PATH}/discussions/abc", {"resolved": True})]
-    assert capsys.readouterr().out == f"Resolved discussion abc - {MR_URL}\n"
+    fake.routes = [Route(f"{MR_PATH}/discussions/{DISCUSSION}", {"id": DISCUSSION, "notes": [{"resolvable": True}]})]
+    run("resolve", DISCUSSION)
+    assert writes(fake) == [("PUT", f"{MR_PATH}/discussions/{DISCUSSION}", {"resolved": True})]
+    assert capsys.readouterr().out == f"Resolved discussion {DISCUSSION} - {MR_URL}\n"
 
 
 def test_editing_an_inline_draft_sends_its_position_back(

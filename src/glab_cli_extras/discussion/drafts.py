@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, NoReturn
 
+from glab_cli_extras.discussion.checks import require_body
 from glab_cli_extras.discussion.context import resolve_mr_context
 from glab_cli_extras.discussion.models import DraftNote, MrContext, parse_draft_note
 from glab_cli_extras.gitlab.sync_api import GlabApiError, glab_api, glab_graphql_mutation, glab_graphql_query
@@ -248,6 +249,7 @@ def run_publish(args: argparse.Namespace) -> None:
     body = None
     if args.body is not None:
         body = sys.stdin.read() if args.body == "-" else args.body
+        require_body(body)
 
     drafts, state = _fetch_drafts_and_state(ctx, with_activity=args.verdict is None)
     # Without --verdict the review would still get the default verdict, but a bare call with nothing pending

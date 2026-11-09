@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from glab_cli_extras.discussion.checks import CheckError
 from glab_cli_extras.discussion.context import ContextError
 from glab_cli_extras.discussion.ids import parse_note_ref
 from glab_cli_extras.gitlab.client import ApiError
@@ -183,6 +184,9 @@ def main(argv: list[str] | None = None) -> None:
         _dispatch(args, parser)
     except ContextError as exc:
         parser.error(str(exc))
+    except CheckError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     except (ApiError, GlabApiError, RefError, GlabNotFoundError, LockTimeout, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
