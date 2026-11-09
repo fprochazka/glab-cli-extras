@@ -37,3 +37,4 @@ Two enabled plugins named `glab` collide: Claude Code loads the hooks of only on
 
 - `glab:glab-pipeline`: `glab-pipeline inspect`, the dump it writes into the pipeline's dir, and the order to read it in: the summary first, then only the files it names.
 - `glab:glab-discussion`: `glab-discussion` for reading threads into files and for writing, resolving, editing and deleting comments; the signature line on posted comments, the draft environment variable, and giving a review with a verdict.
+- `glab:glab`: the glab CLI. Merge requests, issues, pipeline actions, releases, variables, schedules, labels, and the raw API with pagination and GraphQL, with a list of the commands the Bash guard denies and what to use instead.
