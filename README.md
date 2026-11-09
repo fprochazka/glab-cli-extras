@@ -105,7 +105,7 @@ Lifecycle events come with every resource and cannot be filtered out:
 
 - `state_changed` (`from`, `to`, and `reopened: true` for closed to opened), `draft_changed`, `title_changed`, `description_changed`
 - `pushed`: `from`, `to`, `forced`. A force-push is detected with one `merge_base` request per push.
-- `merge_status_changed`: GitLab's transient `checking`, `unchecked` and `preparing` are skipped.
+- `merge_status_changed`: GitLab's transient `checking`, `unchecked` and `preparing` are skipped, and so is every change once the MR is merged or closed.
 - `approvals_changed`, `reviewers_changed`
 - `head_pipeline_changed`, `pipeline_status_changed` (`from`, `to`) and `pipeline_finished` (with `failed_jobs` when it failed) for the head pipeline. These are pipeline-level only: an MR watch reports no job events and downloads no logs. Each one has the pipeline's `web_url` and `watch_command`, the `glab-watch pipeline <url>` command that watches it job by job. The head pipeline's status comes with the MR's own snapshot query, so it costs no extra request.
 - `thread_created`, `thread_updated`, `thread_resolved`, `thread_unresolved`, each with the thread's file in `artifacts`. GitLab can show a thread unresolved for a poll or two after a force-push; a `thread_unresolved` within two polls of a `pushed` has `after_push: true`.

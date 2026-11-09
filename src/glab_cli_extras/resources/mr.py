@@ -163,7 +163,9 @@ def diff_mr(prev: MrSnapshot, cur: MrSnapshot) -> list[RawEvent]:
         events.append(RawEvent("description_changed", {}))
     if prev.head_sha != cur.head_sha and cur.head_sha:
         events.append(RawEvent("pushed", {"from": prev.head_sha, "to": cur.head_sha}))
-    if prev.merge_status != cur.merge_status and cur.merge_status:
+    # A merged or closed MR is not mergeable by definition; GitLab still moves its merge status (to not_open),
+    # which says nothing the state_changed event does not.
+    if prev.merge_status != cur.merge_status and cur.merge_status and cur.state not in TERMINAL_STATES:
         events.append(RawEvent("merge_status_changed", {"from": prev.merge_status, "to": cur.merge_status}))
     approvals_known = prev.approved_by is not None and cur.approved_by is not None
     if approvals_known and (prev.approved_by, prev.approvals_left, prev.approved) != (

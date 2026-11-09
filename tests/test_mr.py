@@ -77,6 +77,14 @@ def test_transient_merge_status_keeps_the_settled_value() -> None:
         assert diff_mr(prev, cur) == []
 
 
+def test_a_merged_or_closed_mr_reports_no_merge_status_change() -> None:
+    prev = snap(state="opened", merge_status="CI_STILL_RUNNING")
+    for terminal in ("merged", "closed"):
+        assert kinds(diff_mr(prev, snap(state=terminal, merge_status="NOT_OPEN"))) == ["state_changed"]
+    merged = snap(state="merged", merge_status="NOT_OPEN")
+    assert diff_mr(merged, snap(state="merged", merge_status="MERGEABLE")) == []
+
+
 def test_thread_diff_tells_new_notes_from_resolves_and_edits() -> None:
     base = [
         gql_thread("aaa", [(1, "2026-11-09T09:00:00Z", "reviewer-one")]),
