@@ -61,7 +61,7 @@ glab-watch branch group/project main                 # a branch; the repo is opt
 
 `<repo>` means the same as it does to glab: `group/project`, `group/sub/project`, `host/group/project`, a project URL, or nothing for the repository of the current directory. `glab-watch` asks `glab repo view` to resolve it, which costs one request at start. A URL costs nothing.
 
-A watcher runs until its resource ends (an MR is merged or closed, a pipeline finishes), until `--until` or `--timeout` fires, or until it gets SIGTERM or Ctrl-C. `mrs` and `branch` run until stopped. The last event is always `watch_ended` with a `reason`.
+A watcher runs until its resource ends (an MR is merged or closed, a pipeline finishes), until `--until`, `--timeout` or `--idle-after` fires, or until it gets SIGTERM or Ctrl-C. `mrs` and `branch` run until stopped. The last event is always `watch_ended` with a `reason`.
 
 The exit code is 0 when the watch ends normally, 1 when the resource is not found or the daemon fails, and 2 for a usage error.
 
@@ -72,7 +72,8 @@ All four resource commands take:
 - `--events=<kinds or groups>`: report only these. Comma-separated, repeatable. The default is every event the resource tracks.
 - `--exclude-events=<kinds or groups>`: do not report these.
 - `--until=<kind>`: stop after the first event of this kind, for example `--until=finished`.
-- `--timeout=<duration>`: stop after `90s`, `30m`, `2h` or `1h30m`.
+- `--timeout=<duration>`: stop after `90s`, `30m`, `2h` or `1h30m`, counted from the start.
+- `--idle-after=<duration>`: stop when nothing was reported for this long. Every reported event starts the count again, except `quiet` and `pipeline_stuck`, which report that nothing happened. The watch ends with `watch_ended` reason `idle`.
 - `--events-stream=auto|stdout|claude-message`: where events go. See [Output streams](#output-streams).
 - `--base-dir=<path>`: where the resource dirs go. See [Where files go](#where-files-go).
 - `--message-priority=now|next|later`: for `claude-message` only. The default is `next`.
@@ -103,7 +104,7 @@ glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-v3.
 glab-watch: restart with: glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123 --events=<kinds|groups> --exclude-events=<kinds|groups> (groups: status, comments, push, pipeline)
 ```
 
-The `state:` line appears for `mr` and `pipeline` only. A watch with `--quiet-after` or `--stuck-after` adds a `thresholds:` line, a `pipeline` watch adds a `logs:` line, a watch with `--until` or `--timeout` adds an `ends:` line, and a `stream fallback:` line says why `auto` did not message the session.
+The `state:` line appears for `mr` and `pipeline` only. A watch with `--quiet-after` or `--stuck-after` adds a `thresholds:` line, a `pipeline` watch adds a `logs:` line, a watch with `--until`, `--timeout` or `--idle-after` adds an `ends:` line, and a `stream fallback:` line says why `auto` did not message the session.
 
 The header and the other status lines (`ended: …`, errors) always go to stderr, so stdout carries only events. Claude Code puts a background task's stderr into the task output next to its stdout, so an agent sees both. A status line never starts with `{`: in merged output, every line that starts with `{` is an event.
 
@@ -121,7 +122,7 @@ Lifecycle events come with every resource and cannot be filtered out:
 
 - `watch_started`: the current state, in `data.summary`.
 - `watch_degraded`: polling has trouble: `rate_limited`, `auth`, `not_found` or `error`, with a message. It is sent once per kind of trouble, not on every failed poll. The reason `daemon_mismatch` means the running daemon does not know a request this `glab-watch` sends, because it was started from other code of the same protocol version (an editable install that changed since). The watch keeps reporting events, but the files that need the daemon (job logs, thread files, the pipeline dump) stay out of date until you run `glab-watch daemon stop`; the running watchers then start a current daemon and subscribe again.
-- `watch_ended`: with a `reason`: `merged`, `closed`, `finished`, `not_found`, `until`, `timeout`, `session_gone`, or the signal.
+- `watch_ended`: with a `reason`: `merged`, `closed`, `finished`, `not_found`, `until`, `timeout`, `idle`, `session_gone`, or the signal.
 
 `mr`:
 

@@ -32,7 +32,7 @@ from glab_cli_extras.watch.changelog import Changelog
 from glab_cli_extras.watch.client import Backend, BackendError, Watcher, WatchSettings, default_backend
 from glab_cli_extras.watch.sinks import Sink, StatusOutput
 from glab_cli_extras.watch.streams import MESSAGE_PRIORITIES, STREAM_MODES, StreamError, open_stream
-from glab_cli_extras.watch.timers import Thresholds
+from glab_cli_extras.watch.timers import Thresholds, format_duration
 from glab_cli_extras.watch.writer import ResourceWriter
 
 EXIT_USAGE = 2
@@ -96,6 +96,14 @@ BaseDirOpt = Annotated[
 UntilOpt = Annotated[str | None, typer.Option("--until", help="Stop after the first event of this kind.")]
 TimeoutOpt = Annotated[
     str | None, typer.Option("--timeout", help="Stop after this long, for example 90s, 30m, 2h, 1h30m.")
+]
+IdleAfterOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--idle-after",
+        help="Stop when nothing was reported for this long, for example 3h. Every reported event starts the count "
+        "again; quiet and pipeline_stuck do not.",
+    ),
 ]
 NoDaemonOpt = Annotated[
     bool, typer.Option("--no-daemon", help="Poll inside this process with a private budget, without the daemon.")
@@ -199,11 +207,12 @@ def print_header(
         status.line(f"thresholds: {'; '.join(described)}")
     if logs is not None:
         status.line(f"logs: {logs}")
-    if until or timeout:
-        status.line(
-            f"ends: {'on ' + until if until else ''}{' or ' if until and timeout else ''}"
-            f"{'after ' + timeout if timeout else ''}"
-        )
+    idle_after = thresholds.idle_after if thresholds else None
+    ends = [f"on {until}"] if until else []
+    ends += [f"after {timeout}"] if timeout else []
+    ends += [f"after {format_duration(idle_after)} without an event"] if idle_after else []
+    if ends:
+        status.line(f"ends: {' or '.join(ends)}")
     status.line(f"daemon: {backend.describe()}")
     groups = ", ".join(f"{name}" for name in GROUPS if name != "lifecycle" and set(GROUPS[name]) & set(tracked))
     options = "--events=<kinds|groups> --exclude-events=<kinds|groups>"
@@ -227,6 +236,7 @@ def run_watch(
     logs: str | None,
     quiet_after: list[str] | None = None,
     stuck_after: str | None = None,
+    idle_after: str | None = None,
 ) -> None:
     if events_stream not in STREAM_MODES:
         _fail(f"--events-stream must be one of {', '.join(STREAM_MODES)}")
@@ -237,6 +247,7 @@ def run_watch(
     thresholds = Thresholds(
         quiet_after=tuple(sorted({_threshold("--quiet-after", v) for v in quiet_after or ()})),
         stuck_after=_threshold("--stuck-after", stuck_after) if stuck_after else None,
+        idle_after=_threshold("--idle-after", idle_after) if idle_after else None,
     )
     enabled = ([QUIET] if thresholds.quiet_after else []) + ([PIPELINE_STUCK] if thresholds.stuck_after else [])
     try:
@@ -303,6 +314,7 @@ def mr(
     exclude_events: ExcludeOpt = None,
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
+    idle_after: IdleAfterOpt = None,
     quiet_after: QuietAfterOpt = None,
     stuck_after: StuckAfterOpt = None,
     events_stream: StreamOpt = "auto",
@@ -321,6 +333,7 @@ def mr(
         base_dir=base_dir,
         until=until,
         timeout=timeout,
+        idle_after=idle_after,
         no_daemon=no_daemon,
         message_priority=message_priority,
         logs=None,
@@ -337,6 +350,7 @@ def pipeline(
     logs: LogsOpt = "failed",
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
+    idle_after: IdleAfterOpt = None,
     stuck_after: StuckAfterOpt = None,
     events_stream: StreamOpt = "auto",
     base_dir: BaseDirOpt = None,
@@ -353,6 +367,7 @@ def pipeline(
         base_dir=base_dir,
         until=until,
         timeout=timeout,
+        idle_after=idle_after,
         no_daemon=no_daemon,
         message_priority=message_priority,
         logs=logs,
@@ -367,6 +382,7 @@ def mrs(
     exclude_events: ExcludeOpt = None,
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
+    idle_after: IdleAfterOpt = None,
     events_stream: StreamOpt = "auto",
     base_dir: BaseDirOpt = None,
     message_priority: PriorityOpt = "next",
@@ -382,6 +398,7 @@ def mrs(
         base_dir=base_dir,
         until=until,
         timeout=timeout,
+        idle_after=idle_after,
         no_daemon=no_daemon,
         message_priority=message_priority,
         logs=None,
@@ -395,6 +412,7 @@ def branch(
     exclude_events: ExcludeOpt = None,
     until: UntilOpt = None,
     timeout: TimeoutOpt = None,
+    idle_after: IdleAfterOpt = None,
     events_stream: StreamOpt = "auto",
     base_dir: BaseDirOpt = None,
     message_priority: PriorityOpt = "next",
@@ -413,6 +431,7 @@ def branch(
         base_dir=base_dir,
         until=until,
         timeout=timeout,
+        idle_after=idle_after,
         no_daemon=no_daemon,
         message_priority=message_priority,
         logs=None,

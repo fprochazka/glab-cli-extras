@@ -36,6 +36,7 @@ MR_URL = "https://gitlab.example.com/group/project/-/merge_requests/42"
         (["mr", MR_URL, "--stuck-after=30m", "--events=status"], "'pipeline_stuck' is filtered out"),
         (["mr", MR_URL, "--quiet-after=soon"], "--quiet-after: cannot read the duration"),
         (["mr", MR_URL, "--quiet-after=0s"], "longer than zero"),
+        (["mrs", "group/project", "--idle-after=later"], "--idle-after: cannot read the duration"),
         (["pipeline", PIPELINE_URL, "--stuck-after=0"], "longer than zero"),
     ],
 )

@@ -1,4 +1,4 @@
-"""The events a watcher derives from time: `quiet` and `pipeline_stuck`.
+"""The events a watcher derives from time, `quiet` and `pipeline_stuck`, and the idle end of a watch.
 
 Both come from the snapshots and events the watcher already receives, so they cost no request. The daemon never
 sees them: they depend on what this watcher reported, which differs per watcher of the same resource.
@@ -8,6 +8,7 @@ sees them: they depend on what this watcher reported, which differs per watcher 
   again.
 - `pipeline_stuck` (MR head pipeline, or the watched pipeline): still `running` or `pending` a threshold's length
   after the watcher first saw it in one of those statuses. Once per pipeline id.
+- idle: nothing was reported for `--idle-after`, so the watch ends with `watch_ended` reason `idle`.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ def format_duration(seconds: float) -> str:
 class Thresholds:
     quiet_after: tuple[float, ...] = ()
     stuck_after: float | None = None
+    idle_after: float | None = None
 
     def describe(self) -> list[str]:
         parts = []
@@ -104,7 +106,7 @@ class WatchTimers:
                 self._active_since.pop(pipeline.id, None)
 
     def reported(self, events: Iterable[Event], now: float) -> None:
-        """Every reported event other than a threshold event restarts the quiet count."""
+        """Every reported event other than a threshold event restarts the quiet and idle counts."""
         if any(e.kind not in TIMER_KINDS for e in events):
             self._last_activity = now
 
@@ -155,9 +157,15 @@ class WatchTimers:
                 found.append((PIPELINE_STUCK, data))
         return found
 
+    def idle(self, now: float) -> bool:
+        idle_after = self.thresholds.idle_after
+        return idle_after is not None and now - self._last_activity >= idle_after
+
     def seconds_until_next(self, now: float) -> float | None:
         """How long until the next threshold can fire, so the watcher does not sleep past it."""
         candidates: list[float] = []
+        if self.thresholds.idle_after is not None:
+            candidates.append(self._last_activity + self.thresholds.idle_after - now)
         reference = self._quiet_reference()
         if reference is not None and self._head_sha is not None:
             candidates += [

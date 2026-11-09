@@ -227,3 +227,33 @@ def test_the_watcher_reports_quiet_without_asking_the_daemon_for_it(tmp_path: Pa
     # The daemon is asked for the head pipeline, which the snapshot needs, and never for the client's own kinds.
     assert "quiet" not in backend.subscribed
     assert {"head_pipeline_changed", "pipeline_status_changed", "pipeline_finished"} <= backend.subscribed
+
+
+def test_idle_counts_from_the_last_reported_event_other_than_a_threshold_event() -> None:
+    timers = WatchTimers("mrs", Thresholds(idle_after=3600.0), now=0)
+    timers.reported([event("mr_updated")], now=1000)
+    assert not timers.idle(4599)
+    assert timers.seconds_until_next(4000) == 600
+    timers.reported([event("quiet"), event("pipeline_stuck")], now=4000)
+    assert timers.idle(4600)
+
+
+def test_the_watcher_ends_idle_after_nothing_was_reported(tmp_path: Path) -> None:
+    started = Event("watch_started", MR.key, 0, "2026-11-09T10:00:00.000Z", {"summary": {}}).to_json()
+    changed = Event("draft_changed", MR.key, 1, "2026-11-09T10:01:00.000Z", {"draft": False}).to_json()
+    backend = SnapshotBackend(MR, [([started], mr_snapshot(status="running")), ([changed], None)])
+    selected = frozenset({"watch_started", "watch_degraded", "watch_ended", "draft_changed"})
+    out = io.StringIO()
+    clock = Clock()
+    watcher = Watcher(
+        WatchSettings(MR, selected, "none", None, None, Thresholds(idle_after=300.0)),
+        backend,
+        StdoutSink(out),
+        Changelog(tmp_path, MR),
+        StatusOutput(io.StringIO()),
+        clock=clock,
+    )
+    assert watcher.run() == 0
+    lines = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert [line["kind"] for line in lines] == ["watch_started", "draft_changed", "watch_ended"]
+    assert lines[-1]["data"] == {"reason": "idle", "idle_after": "5m"}

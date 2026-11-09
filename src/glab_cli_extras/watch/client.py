@@ -35,7 +35,7 @@ from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.sync.job_logs import LogContent, LogsMode
 from glab_cli_extras.watch.changelog import Changelog
 from glab_cli_extras.watch.sinks import Sink, StatusOutput
-from glab_cli_extras.watch.timers import Thresholds, WatchTimers
+from glab_cli_extras.watch.timers import Thresholds, WatchTimers, format_duration
 from glab_cli_extras.watch.writer import ResourceWriter
 
 T = TypeVar("T")
@@ -386,6 +386,10 @@ class Watcher:
                     return EXIT_OK
                 if deadline is not None and self.clock() >= deadline:
                     self._finish(self._end_event("timeout"))
+                    return EXIT_OK
+                if timers.idle(self.clock()):
+                    idle_after = self.settings.thresholds.idle_after or 0.0
+                    self._finish(self._end_event("idle", idle_after=format_duration(idle_after)))
                     return EXIT_OK
                 wait = int(response.get("next_poll_ms", 5000)) / 1000.0
                 if deadline is not None:
