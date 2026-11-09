@@ -82,20 +82,13 @@ wheels = [
 [[package]]
 name = "cc-blackbox"
 version = "0.2.0"
-source = { editable = "../cc-blackbox" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml" },
 ]
-
-[package.metadata]
-requires-dist = [{ name = "pyyaml", specifier = ">=6.0" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.15" },
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "ruff", specifier = ">=0.11.0" },
-    { name = "types-pyyaml", specifier = ">=6.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/2f/9d/7cb6f40882207dcf726c03c4f42d4f27b4809ec4bcf01d29bdb6812ceeef/cc_blackbox-0.2.0.tar.gz", hash = "sha256:f24987056ad62e30b7bbe1e2f925486e5a46ec80d7ac3f5913c9cf771d520500", size = 71423, upload-time = "2026-11-09T13:19:12.01Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fe/65/14e76f2e6eb4f4f35bbff779cf69532bf1b6d720b8467e2b3b7b3ded00b3/cc_blackbox-0.2.0-py3-none-any.whl", hash = "sha256:18bd66d990f30b3295fe3cff23123131ab1eaf8f6eba1282eb9ab99f0a9a6610", size = 31494, upload-time = "2026-11-09T13:19:10.725Z" },
 ]
 
 [[package]]
@@ -135,7 +128,7 @@ typecheck = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cc-blackbox", editable = "../cc-blackbox" },
+    { name = "cc-blackbox", specifier = ">=0.2,<0.3" },
     { name = "rich", specifier = ">=14" },
     { name = "typer", specifier = ">=0.15" },
 ]

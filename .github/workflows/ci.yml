@@ -10,8 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Check out the SDK next to this repository, where tool.uv.sources expects it
-        run: git clone --depth 1 https://github.com/fprochazka/cc-blackbox ../cc-blackbox
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -29,8 +27,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-      - name: Check out the SDK next to this repository, where tool.uv.sources expects it
-        run: git clone --depth 1 https://github.com/fprochazka/cc-blackbox ../cc-blackbox
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -43,8 +39,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Check out the SDK next to this repository, where tool.uv.sources expects it
-        run: git clone --depth 1 https://github.com/fprochazka/cc-blackbox ../cc-blackbox
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true

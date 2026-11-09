@@ -16,7 +16,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "cc-blackbox>=0.2",
+  "cc-blackbox>=0.2,<0.3",
   "rich>=14",
   "typer>=0.15",
 ]
@@ -33,10 +33,6 @@ packages = ["src/glab_cli_extras"]
 
 [tool.uv]
 package = true
-
-# Local development against a sibling checkout of the SDK, which is not published yet.
-[tool.uv.sources]
-cc-blackbox = { path = "../cc-blackbox", editable = true }
 
 [dependency-groups]
 dev = [

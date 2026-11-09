@@ -8,15 +8,17 @@ Every GitLab request goes through `glab api`, so `glab` handles authentication, 
 
 You need Python 3.11 or later, [uv](https://docs.astral.sh/uv/), and `glab` logged in to your GitLab host (`glab auth status`).
 
-`glab-watch` depends on [cc-blackbox](https://github.com/fprochazka/cc-blackbox), which is not published yet. Until it is, the project finds the SDK as a sibling checkout (`../cc-blackbox`), so clone both next to each other and install from the local checkout:
+From git:
 
 ```bash
-git clone https://github.com/fprochazka/cc-blackbox
-git clone https://github.com/fprochazka/glab-cli-extras
-uv tool install --editable ./glab-cli-extras
+uv tool install git+https://github.com/fprochazka/glab-cli-extras
 ```
 
-Once the SDK has a release or a git dependency, `uv tool install git+https://github.com/fprochazka/glab-cli-extras` will work without the sibling checkout.
+From a local checkout:
+
+```bash
+uv tool install --editable /path/to/glab-cli-extras
+```
 
 ## Usage
 
@@ -188,7 +190,13 @@ uv run mypy
 uv run pytest
 ```
 
-Development needs the SDK checked out next to this repository, as for the install. The tests need no network and no glab login. A fake `glab` (`tests/fakeglab.py`) answers with the response shapes recorded from a GitLab 19.5 instance, in process for the pollers and as a real executable on `PATH` for the daemon tests, which start real daemons in temporary dirs.
+To run against a local checkout of [cc-blackbox](https://github.com/fprochazka/cc-blackbox) instead of its release, for example while changing both, layer it over the locked version for one command. This leaves `pyproject.toml` and `uv.lock` alone:
+
+```bash
+uv run --with-editable ../cc-blackbox pytest
+```
+
+The tests need no network and no glab login. A fake `glab` (`tests/fakeglab.py`) answers with the response shapes recorded from a GitLab 19.5 instance, in process for the pollers and as a real executable on `PATH` for the daemon tests, which start real daemons in temporary dirs.
 
 ## License
 
