@@ -13,10 +13,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from glab_cli_extras.events import WATCH_STARTED, Event, utc_now_iso
+from glab_cli_extras.events import WATCH_ENDED, WATCH_STARTED, Event, utc_now_iso
 from glab_cli_extras.gitlab.client import ApiError
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.paths import base_dir
+from glab_cli_extras.pipeline.dump import write_dump
 from glab_cli_extras.serde import from_jsonable
 from glab_cli_extras.store.job_logs import has_log, write_log, write_placeholder
 from glab_cli_extras.store.layout import THREADS_DIR, ensure_readme, pipeline_dir, resource_dir
@@ -186,6 +187,10 @@ class ResourceWriter:
                 event = self._thread_event(event)
             elif event.kind == "job_finished":
                 event = self._job_finished(event)
+            elif event.kind == "finished":
+                event = self._pipeline_finished(event)
+            elif event.kind == WATCH_ENDED:
+                event = self._watch_ended(event)
             attached.append(event)
         return attached
 
@@ -201,6 +206,64 @@ class ResourceWriter:
     def _thread_event(self, event: Event) -> Event:
         path = self._thread_store().path_for(str(event.data.get("discussion_id")))
         return replace(event, artifacts=(str(path),)) if path is not None else event
+
+    def _pipeline_finished(self, event: Event) -> Event:
+        """Write the dump glab-pipeline inspect writes, so a finished watch leaves the same files."""
+        data = event.data
+        try:
+            pipeline_id = int(data["pipeline_id"])
+        except (KeyError, TypeError, ValueError):
+            return event
+        project = str(data.get("project") or self.ref.project)
+        try:
+            # The failed jobs' logs come with their own job_finished events: GitLab archives a trace a few seconds
+            # after the job ends, and the daemon waits for that. Until then their files are placeholders.
+            directory = self.write_finished_dump(project, pipeline_id, fetch_logs=False)
+        except (LockTimeout, OSError, ApiError, RuntimeError, ValueError, KeyError) as exc:
+            self._fail(f"the dump of pipeline {pipeline_id}", exc)
+            return replace(event, data={**data, "dump_error": str(exc)})
+        return replace(event, data={**data, "dir": str(directory)}, artifacts=(str(directory / "summary.txt"),))
+
+    def _watch_ended(self, event: Event) -> Event:
+        """When a pipeline watch ends, the dump is complete: every wanted log is fetched and the summary rewritten.
+        This also covers a pipeline that had already finished when the watch started and so reported no `finished`.
+        The daemon serves the dump and the logs from its cache, so this costs no new GitLab request."""
+        if self.ref.kind != "pipeline" or event.data.get("reason") != "finished":
+            return event
+        assert self.ref.id is not None
+        try:
+            directory = self.write_finished_dump(self.ref.project, self.ref.id, fetch_logs=True)
+        except (LockTimeout, OSError, ApiError, RuntimeError, ValueError, KeyError) as exc:
+            self._fail(f"the dump of pipeline {self.ref.id}", exc)
+            return event
+        return replace(event, artifacts=(str(directory / "summary.txt"),))
+
+    def write_finished_dump(self, project: str, pipeline_id: int, *, fetch_logs: bool) -> Path:
+        """Fetch the dump through the daemon, with `fetch_logs` also the wanted logs still missing, and write it all."""
+        ref = ResourceRef("pipeline", self.ref.host, project, pipeline_id)
+        directory = pipeline_dir(self.base, self.ref.host, project, pipeline_id)
+        dump = self.backend.fetch_dump(ref)
+        with locked(directory, LOCK_TIMEOUT):
+            ensure_readme(directory, "pipeline")
+            state = load_state(directory, ref.key)
+            for job in dump.get("jobs") or [] if fetch_logs else []:
+                status = str(job.get("status", ""))
+                if not wants_log(self.logs, status) or status not in FINAL_JOB_STATUSES:
+                    continue
+                if has_log(directory, state, int(job["id"]), full=False) is None:
+                    content = self.backend.fetch_job_log(self.ref.host, project, int(job["id"]))
+                    write_log(
+                        directory,
+                        state,
+                        job_id=int(job["id"]),
+                        stage=job.get("stage"),
+                        name=str(job.get("name", "")),
+                        status=status,
+                        content=content,
+                    )
+            write_dump(directory, state, ref, dump, self.logs, self.inspect_command(project, pipeline_id))
+            save_state(directory, state)
+        return directory
 
     def _job_finished(self, event: Event) -> Event:
         data = event.data

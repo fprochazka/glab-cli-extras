@@ -87,7 +87,8 @@ def diff_pipeline(prev: PipelineSnapshot, cur: PipelineSnapshot) -> list[RawEven
     if prev.status != cur.status:
         events.append(RawEvent("status_changed", {"pipeline_id": cur.id, "from": prev.status, "to": cur.status}))
         if cur.status in FINAL_PIPELINE_STATUSES and prev.status not in FINAL_PIPELINE_STATUSES:
-            events.append(RawEvent("finished", {"pipeline_id": cur.id, "status": cur.status, "web_url": cur.web_url}))
+            data = {"pipeline_id": cur.id, "project": cur.project, "status": cur.status, "web_url": cur.web_url}
+            events.append(RawEvent("finished", data))
     return events
 
 
@@ -128,6 +129,10 @@ class PipelinePoller(Poller[PipelineSnapshot]):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._state = _EtagState()
+
+    @property
+    def etag(self) -> str | None:
+        return self._state.etag if self._state.supported else None
 
     @property
     def pipeline_final(self) -> bool:

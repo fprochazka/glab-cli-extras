@@ -1,10 +1,13 @@
 """Writing a pipeline dump into its dir: the REST files, the extras and the summary.
 
-Every writer of a pipeline dump calls these functions, so the files are the same whoever writes them.
+Both writers of a pipeline dir call these functions, so the files are the same whoever wrote them: glab-pipeline
+inspect, which fetches in-process, and a glab-watch client, which gets the same data from the daemon when the watched
+pipeline finishes.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,11 +16,12 @@ from typing import Any
 from glab_cli_extras.events import utc_now_iso
 from glab_cli_extras.paths import base_dir
 from glab_cli_extras.pipeline import extras
-from glab_cli_extras.pipeline.models import Bridge, Job, Pipeline
+from glab_cli_extras.pipeline.models import Bridge, Job, Pipeline, parse_bridges, parse_jobs, parse_pipeline
 from glab_cli_extras.pipeline.summary import (
     ExtrasPlan,
     SummaryInputs,
     build_summary_dict,
+    decide_extras,
     format_summary,
 )
 from glab_cli_extras.store.atomic import atomic_write_json, atomic_write_text
@@ -167,3 +171,44 @@ def record_dump(
     now = utc_now_iso()
     put_snapshot(state, snapshot, now, etag=etag)
     state["dump"] = {"written_at": now, "etag": etag, "snapshot_hash": snapshot_hash, "extras": record}
+
+
+def write_dump(
+    directory: Path, state: dict[str, Any], ref: Any, dump: dict[str, Any], logs_mode: str, command: str
+) -> dict[str, Any]:
+    """Write a dump fetched by the daemon (`sync.dump.fetch_dump`): the same files inspect writes with its defaults.
+    The caller holds the dir's lock and saves the state."""
+    pipeline_raw, jobs_raw, bridges_raw = dump["pipeline"], list(dump["jobs"]), list(dump.get("bridges") or [])
+    write_rest(directory, pipeline_raw, jobs_raw, bridges_raw)
+    pipeline = parse_pipeline(pipeline_raw)
+    jobs = parse_jobs(jobs_raw)
+    bridges = parse_bridges(bridges_raw)
+    plan = decide_extras(pipeline, jobs, bridges, now=dt.datetime.now(dt.UTC))
+    out = ExtrasResult()
+    if dump.get("lint") is not None:
+        write_lint(directory, dump["lint"], {"sha": pipeline.sha, "two_step": False}, out)
+    if dump.get("test_report") is not None:
+        write_test_report(directory, dump["test_report"], pipeline.status, out)
+    by_id = {b.id: b for b in bridges}
+    for item in dump.get("downstream") or []:
+        bridge = by_id.get(int(item["bridge_id"]))
+        if bridge is not None:
+            write_downstream(directory, bridge, int(item["pipeline_id"]), item["data"], out)
+    log_paths, truncated = placeholders(directory, state, jobs, logs_mode, command)
+    summary = write_summary(
+        directory,
+        host=ref.host,
+        project=ref.project,
+        pipeline=pipeline,
+        jobs=jobs,
+        bridges=bridges,
+        plan=plan,
+        extras_result=out,
+        log_paths=log_paths,
+        truncated=truncated,
+        logs_mode=logs_mode,
+    )
+    snapshot = dump.get("snapshot")
+    if snapshot is not None:
+        record_dump(state, snapshot, str(dump.get("snapshot_hash")), dump.get("etag"), out.record)
+    return summary

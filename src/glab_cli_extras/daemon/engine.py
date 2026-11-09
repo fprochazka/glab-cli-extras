@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
 import uuid
@@ -48,7 +49,9 @@ from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.resources import POLLERS
 from glab_cli_extras.resources.base import PollContext, Poller, PollerOptions, PushFeedCache
 from glab_cli_extras.resources.mr import prefetch_threads, thread_cache_key
-from glab_cli_extras.resources.pipeline import log_cache_key, prefetch_log
+from glab_cli_extras.resources.pipeline import PipelinePoller, log_cache_key, prefetch_log
+from glab_cli_extras.serde import stable_hash, to_jsonable
+from glab_cli_extras.sync.dump import fetch_dump
 from glab_cli_extras.sync.job_logs import (
     FINAL_JOB_STATUSES,
     LOGS_MODES,
@@ -135,6 +138,7 @@ class Engine:
         self._push_feeds = PushFeedCache()
         self.logs: ByteBoundedCache[LogContent] = ByteBoundedCache()
         self.threads: ByteBoundedCache[dict[str, Any]] = ByteBoundedCache()
+        self.dumps: ByteBoundedCache[dict[str, Any]] = ByteBoundedCache(16 * 1024 * 1024)
         self._inflight: dict[str, int] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._wake: asyncio.Event | None = None
@@ -258,7 +262,11 @@ class Engine:
                 host: {"budget": c.budget.describe(now), "requests": c.stats.describe()}
                 for host, c in sorted(self._clients.items())
             },
-            "caches": {"logs": self.logs.describe(), "threads": self.threads.describe()},
+            "caches": {
+                "logs": self.logs.describe(),
+                "threads": self.threads.describe(),
+                "dumps": self.dumps.describe(),
+            },
         }
 
     # ----------------------------------------------------------------------------------------------------------
@@ -310,6 +318,29 @@ class Engine:
             return await prefetch_threads(ctx, ref, snap, ids)
         await self._await_budget(ref.host)
         return await fetch_discussions(ctx.client, ref, ids)
+
+    async def fetch_dump(self, ref: ResourceRef) -> dict[str, Any]:
+        """A finished pipeline's REST dump and extras, with the snapshot and ETag the daemon holds for it.
+
+        Cached by the snapshot it belongs to, so every client of one finished pipeline costs one fetch.
+        """
+        res = self.resources.get(ref.key)
+        poller = res.poller if res is not None else None
+        snap = poller.snapshot if poller is not None else None
+        if not isinstance(snap, PipelineSnapshot):
+            snap = None
+        key = ("dump", ref.key, stable_hash(snap) if snap is not None else None)
+        cached = self.dumps.get(key) if snap is not None else None
+        if cached is not None:
+            return cached
+        await self._await_budget(ref.host)
+        dump = await fetch_dump(self.client_for(ref.host), ref)
+        if snap is not None:
+            dump["snapshot"] = to_jsonable(snap)
+            dump["snapshot_hash"] = stable_hash(snap)
+            dump["etag"] = poller.etag if isinstance(poller, PipelinePoller) else None
+            self.dumps.put(key, dump, len(json.dumps(dump)))
+        return dump
 
     # ----------------------------------------------------------------------------------------------------------
     # Resources

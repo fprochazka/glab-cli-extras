@@ -112,7 +112,7 @@ Lifecycle events come with every resource and cannot be filtered out:
 
 One `glab-discussion drafts publish` changes the MR in up to three ways at once: a review state, `reviewers_changed` when it added you as a reviewer, and `approvals_changed` when it revoked your approval. A watcher of your own MR sees these as events like any other.
 
-`pipeline`: `status_changed`, `job_started`, `job_finished` (with the log in `artifacts` when `--logs` asks for it), `downstream_created`, `finished`.
+`pipeline`: `status_changed`, `job_started`, `job_finished` (with the log in `artifacts` when `--logs` asks for it), `downstream_created`, `finished` (with `summary.txt` in `artifacts`).
 
 `mrs`: `mr_opened`, `mr_updated`, `mr_merged`, `mr_closed`, `mr_reopened`. When the list shows what moved, the event has `changes: {field: [old, new]}` for `title`, `draft`, `target_branch`, `sha`, `detailed_merge_status`, `labels`, `assignees` and `reviewers`, for example `{"draft": [true, false]}` when a draft becomes ready. These come from the same list request, so they cost nothing extra.
 
@@ -142,6 +142,8 @@ The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipel
 - `events.jsonl`: every event the watcher reported, and `baseline.json`, the last state this watcher saw.
 - `job-logs/<stage>-<name>-<job id>.log` in a pipeline's dir, one file for every job of a watched pipeline. A log is downloaded once, a few seconds after the job ends. A job whose log is not downloaded, because it passed and `--logs` is `failed`, or because it is still running, pending, skipped or manual, has a short placeholder in its place. The placeholder starts with `[glab-cli-extras: log not downloaded]`, says why, and gives the `glab-pipeline inspect … --logs=all` command that downloads it. `state.json` records `log_state` for each job: `downloaded`, `tail` or `placeholder`. On GitLab 19.0 and later a log above 500 KB is read as its last 500 KB only, and the file starts with a `[glab-cli-extras: last …]` line. The log of a downstream job goes to its own pipeline's dir.
 - `threads/<created>-<author>-<id>.txt` in an MR's dir, one file per discussion thread, in glab-discussion's format: a header with the full discussion id, the type, the file and line of a diff note, `Resolved:` on resolvable threads and the URL, then one `[<created>] @<username> (note:<id>):` block per note. Bot authors get a `bot-` file name prefix and a `[BOT]` tag, service accounts their display name. A file is rewritten only when the thread changed: a new reply, an edit, a resolve. `.meta.json` maps each discussion id to its file.
+
+- When a watched pipeline finishes, the watcher writes what `glab-pipeline inspect` writes for it: `pipeline.json`, `jobs.json`, `bridges.json`, the lint, test report and downstream files when they apply, and `summary.json` and `summary.txt`. `finished` and the final `watch_ended` carry `summary.txt` in `artifacts`, and `finished` carries the dir in `data.dir`. A later `glab-pipeline inspect` of the same pipeline in the same session finds the files current and makes one request, the ETag probe.
 
 The daemon writes no files. It fetches each log and each changed thread once, keeps it in memory for a while, and hands it to every watcher that asks, so ten watchers of one pipeline cost one download. The watchers write the files.
 
@@ -187,7 +189,7 @@ glab-watch: changelog: /tmp/glab-cli-extras-1000/gitlab.example.com/group/projec
 glab-watch: events: state_changed,draft_changed,pushed,… (always: watch_started,watch_degraded,watch_ended)
 glab-watch: ignored: thread_created,thread_updated,thread_resolved,thread_unresolved
 glab-watch: logs: failed
-glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-v2.sock, log /run/user/1000/glab-cli-extras/daemon-v2.log
+glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-v3.sock, log /run/user/1000/glab-cli-extras/daemon-v3.log
 glab-watch: restart with: glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123 --events=<kinds|groups> --exclude-events=<kinds|groups> --logs=failed|all|none (groups: status, comments, push, pipeline)
 ```
 
@@ -205,7 +207,7 @@ glab-watch daemon logs -n 100 # the end of the daemon's log
 glab-watch daemon stop        # running watchers start a new daemon on their next poll and carry on
 ```
 
-- **One daemon per user.** It holds an OS lock on `daemon-v2.lock` in its state dir (`$XDG_RUNTIME_DIR/glab-cli-extras/` on Linux, `$TMPDIR/glab-cli-extras/` on macOS, `%LOCALAPPDATA%\glab-cli-extras\run\` on Windows). Watchers that start at the same moment start one daemon, not one each.
+- **One daemon per user.** It holds an OS lock on `daemon-v3.lock` in its state dir (`$XDG_RUNTIME_DIR/glab-cli-extras/` on Linux, `$TMPDIR/glab-cli-extras/` on macOS, `%LOCALAPPDATA%\glab-cli-extras\run\` on Windows). Watchers that start at the same moment start one daemon, not one each.
 - **Leases.** Each watcher polls the daemon every 5 s, which renews its subscriptions. A watcher that dies stops costing anything 20 s later.
 - **Restarts.** If the daemon goes away, watchers start a new one and subscribe again. The new daemon compares GitLab's state with the snapshot each watcher kept, so a change made in between is still reported, and nothing is reported twice.
 - **Budget.** The daemon paces each host on GitLab's `RateLimit-Remaining` and `RateLimit-Reset` headers and uses at most half of what is left. A host without those headers gets 60 requests a minute. When the budget is short, every poll interval grows by the same factor. A 429 pauses the whole host for its `Retry-After`.

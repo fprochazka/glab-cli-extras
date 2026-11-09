@@ -71,6 +71,9 @@ async def handle(engine: Engine, request: dict[str, Any], stop: asyncio.Event) -
                 raise RequestError("ids must be a list of discussion ids")
             discussions = await engine.fetch_threads(ResourceRef.from_wire(request.get("resource")), set(ids))
             return {"ok": True, "discussions": discussions}
+        if op == "fetch_dump":
+            dump = await engine.fetch_dump(ResourceRef.from_wire(request.get("resource")))
+            return {"ok": True, "dump": dump}
         if op == "unsubscribe":
             removed = engine.unsubscribe(_str(request, "client_id"), _str(request, "subscription_id"))
             return {"ok": True, "removed": removed}

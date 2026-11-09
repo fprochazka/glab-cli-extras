@@ -57,6 +57,9 @@ class ScriptedBackend:
     def fetch_threads(self, ref: ResourceRef, ids: set[str]) -> dict[str, dict[str, Any]]:
         raise AssertionError("no thread expected")
 
+    def fetch_dump(self, ref: ResourceRef) -> dict[str, Any]:
+        raise AssertionError("no dump expected")
+
     def begin_shutdown(self) -> None:
         pass
 

@@ -210,6 +210,74 @@ def test_watch_command_streams_jsonl_and_header_goes_to_stderr(daemon_env: Daemo
     assert (events_file.parent / "README.txt").is_file()
 
 
+def test_a_finished_watch_leaves_the_files_inspect_writes_and_inspect_then_costs_one_request(
+    daemon_env: DaemonEnv,
+) -> None:
+    jobs = [
+        {"id": 1, "name": "build", "stage": "build", "status": "success", "web_url": "u", "started_at": "x"},
+        {
+            "id": 2,
+            "name": "unit",
+            "stage": "test",
+            "status": "failed",
+            "web_url": "u",
+            "started_at": "x",
+            "failure_reason": "script_failure",
+        },
+    ]
+    rest_pipeline = {"id": 5001, "status": "failed", "ref": "main", "sha": "a" * 40, "web_url": PIPELINE_URL}
+    daemon_env.routes(
+        Route(
+            "PipelineTree",
+            {
+                "data": gql_pipeline(
+                    5001, "failed", [gql_job(1, "build", "success", stage="build"), gql_job(2, "unit", "failed")]
+                )
+            },
+            etag='W/"1"',
+        ),
+        Route("pipelines/5001/jobs", jobs),
+        Route("pipelines/5001/bridges", []),
+        Route("pipelines/5001/test_report_summary", {"total": {"failed": 1, "count": 3}}),
+        Route("pipelines/5001", rest_pipeline),
+        Route("version", {"version": "18.11.0"}),
+        Route("jobs/2/trace", "FAILED: unit\n"),
+    )
+    base = daemon_env.root / "base"
+    watch = _watch(["pipeline", PIPELINE_URL, "--events-stream=stdout", "--base-dir", str(base)], daemon_env.env())
+    out, err = watch.communicate(timeout=30)
+    assert watch.returncode == 0, err
+    ended = json.loads(out.splitlines()[-1])
+    pipeline_dir = base / HOST / "group" / "project" / "-" / "pipelines" / "5001"
+    assert ended["kind"] == "watch_ended" and ended["artifacts"] == [str(pipeline_dir / "summary.txt")]
+    assert (pipeline_dir / "job-logs" / "test-unit-2.log").read_text() == "FAILED: unit\n"
+    watched = json.loads((pipeline_dir / "summary.json").read_text())
+    state = json.loads((pipeline_dir / "state.json").read_text())
+    assert state["dump"]["etag"] == 'W/"1"'
+    assert {k: v["log_state"] for k, v in state["logs"].items()} == {"1": "placeholder", "2": "downloaded"}
+
+    calls_before = len(daemon_env.calls.read_text().splitlines())
+    inspect = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from glab_cli_extras.cli.pipeline import main; sys.exit(main())",
+            "inspect",
+            "--pipeline-url",
+            PIPELINE_URL,
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**daemon_env.env(), "GLAB_CLI_EXTRAS_BASE_DIR": str(base)},
+    )
+    assert inspect.returncode == 0, inspect.stderr
+    new_calls = [json.loads(line) for line in daemon_env.calls.read_text().splitlines()[calls_before:]]
+    assert [c[-1] for c in new_calls] == ["graphql"]
+    assert json.loads(inspect.stdout) == watched
+
+
 def test_under_claude_code_the_header_still_goes_to_stderr(daemon_env: DaemonEnv) -> None:
     daemon_env.routes(Route("PipelineTree", {"data": gql_pipeline(5001, "success", [])}, etag='W/"1"'))
     watch = _watch(

@@ -61,6 +61,10 @@ class Backend(Protocol):
         """These discussions of the MR; one GitLab no longer has is left out."""
         ...
 
+    def fetch_dump(self, ref: ResourceRef) -> dict[str, Any]:
+        """A finished pipeline's REST dump and extras, with the daemon's snapshot and ETag of it."""
+        ...
+
     def begin_shutdown(self) -> None:
         """The watcher is stopping: from now on, never start a daemon."""
         ...
@@ -117,6 +121,10 @@ class DaemonBackend:
         payload = {"op": "fetch_threads", "resource": ref.to_wire(), "ids": sorted(ids)}
         discussions = self._call(payload, FETCH_TIMEOUT).get("discussions")
         return dict(discussions) if isinstance(discussions, dict) else {}
+
+    def fetch_dump(self, ref: ResourceRef) -> dict[str, Any]:
+        dump = self._call({"op": "fetch_dump", "resource": ref.to_wire()}, FETCH_TIMEOUT).get("dump")
+        return dict(dump) if isinstance(dump, dict) else {}
 
     def unsubscribe(self, client_id: str, subscription_id: str) -> None:
         """Best effort: one short attempt, never a spawn. If the daemon is gone, the lease expiry cleans up."""
@@ -176,6 +184,9 @@ class InProcessBackend:
 
     def fetch_threads(self, ref: ResourceRef, ids: set[str]) -> dict[str, dict[str, Any]]:
         return self._call_async(lambda: self.engine.fetch_threads(ref, ids))
+
+    def fetch_dump(self, ref: ResourceRef) -> dict[str, Any]:
+        return self._call_async(lambda: self.engine.fetch_dump(ref))
 
     def subscribe(
         self, client_id: str, ref: ResourceRef, events: frozenset[str], logs: LogsMode, baseline: Any
