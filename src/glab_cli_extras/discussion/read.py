@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import shutil
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from glab_cli_extras.discussion.context import resolve_mr_context
@@ -80,10 +81,12 @@ def _draft_key_id(key: str) -> int:
     return int(rest) if rest.isdigit() else 0
 
 
-async def sync(ctx: MrContext, client: GitLabClient, *, full: bool) -> tuple[ThreadStore, dict[str, list[str]], bool]:
+async def sync(
+    ctx: MrContext, client: GitLabClient, *, full: bool, base: Path | None = None
+) -> tuple[ThreadStore, dict[str, list[str]], bool]:
     """Bring the MR's thread files up to date. Return the store, the files by change, and whether it was a first run."""
     ref = ResourceRef("mr", ctx.hostname, ctx.project_path, ctx.mr_iid)
-    directory = mr_dir(base_dir(), ctx.hostname, ctx.project_path, ctx.mr_iid)
+    directory = mr_dir(base or base_dir(), ctx.hostname, ctx.project_path, ctx.mr_iid)
     threads_dir = directory / THREADS_DIR
     snapshot, drafts = await _fetch(client, ref)
     users = snapshot_users(snapshot)
@@ -158,19 +161,22 @@ def run_with_context(args: argparse.Namespace, ctx: MrContext, client: GitLabCli
         blocks = [(store.directory / name).read_text(encoding="utf-8") for name in _ordered_files(store)]
         print("\n\n".join(blocks))
         return
+    print("\n".join(dump_lines(store, changes, first_run)))
+
+
+def dump_lines(store: ThreadStore, changes: dict[str, list[str]], first_run: bool) -> list[str]:
+    """What `read --dump` prints: the threads dir, then the files that changed. glab-mr-status prints them too."""
     total = len(store.meta)
-    print(f"Discussions: {store.directory}/")
+    lines = [f"Discussions: {store.directory}/"]
     if first_run:
-        print(f"  synced {len(changes['new'])} discussion threads")
+        lines.append(f"  synced {len(changes['new'])} discussion threads")
     elif changes["new"] or changes["updated"] or changes["deleted"]:
-        for name in changes["updated"]:
-            print(f"  updated: {name}")
-        for name in changes["new"]:
-            print(f"  new: {name}")
-        for name in changes["deleted"]:
-            print(f"  deleted: {name}")
+        lines += [f"  updated: {name}" for name in changes["updated"]]
+        lines += [f"  new: {name}" for name in changes["new"]]
+        lines += [f"  deleted: {name}" for name in changes["deleted"]]
         unchanged = total - len(changes["new"]) - len(changes["updated"])
         if unchanged > 0:
-            print(f"  ({unchanged} discussions up to date)")
+            lines.append(f"  ({unchanged} discussions up to date)")
     else:
-        print(f"  ({total} discussions up to date)")
+        lines.append(f"  ({total} discussions up to date)")
+    return lines

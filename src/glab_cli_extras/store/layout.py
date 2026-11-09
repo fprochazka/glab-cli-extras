@@ -73,6 +73,10 @@ threads/       one file per discussion thread; the "Discussion:" line holds the 
                .meta.json maps each discussion id to its file name
 events.jsonl   every event glab-watch reported for this MR, one JSON object per line
 baseline.json  the last state the watcher saw, used after a daemon restart
+mr.json        the merge request as GitLab's REST API returned it to the last glab-mr-status
+status-baseline.json   the last state glab-mr-status read; the next read reports what changed since
+status-events.log      every change glab-mr-status reported: UTC time, MR, change id, detail, tab-separated
+external-statuses.json the head commit's statuses that its pipeline did not produce, from glab-mr-status
 
 The head pipeline's files are in ../../pipelines/<pipeline id>/.
 """,

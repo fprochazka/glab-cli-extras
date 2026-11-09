@@ -5,6 +5,7 @@ Extra commands for the [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`),
 - `glab-watch` watches a merge request, a pipeline, all merge requests of a project, or a branch, and reports every change as one JSON event per line.
 - `glab-pipeline inspect` dumps a pipeline's state and job logs and prints a problem-driven summary.
 - `glab-discussion` reads a merge request's discussion threads into one file per thread, and writes comments, replies, resolves and reviews.
+- `glab-mr-status` reads merge requests once and reports what changed since the last read, with a one-line scorecard each.
 
 This package supersedes the standalone [glab-pipeline](https://github.com/fprochazka/glab-pipeline) and [glab-discussion](https://github.com/fprochazka/glab-discussion) packages: their commands live here, with the same options and output.
 
@@ -32,7 +33,7 @@ uv tool install --editable /path/to/glab-cli-extras
 
 ## Where files go
 
-All three commands write into the same tree, one dir per resource, so a file one command wrote is current for the others. The base dir is:
+All the commands write into the same tree, one dir per resource, so a file one command wrote is current for the others. The base dir is:
 
 - `<session scratchpad>/glab-cli-extras/` when the command runs under a Claude Code session, which Claude Code removes after a few months;
 - else `<temp dir>/glab-cli-extras-<uid>/`, private to the user, which the OS cleans;
@@ -44,6 +45,7 @@ The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipel
 - `events.jsonl`: the changelog, every event a watcher reported, and `baseline.json`, the last state this watcher saw.
 - `job-logs/<stage>-<name>-<job id>.log` in a pipeline's dir: one file for every job, either the log or a placeholder. See [Job logs](#job-logs).
 - `threads/<created>-<author>-<id>.txt` in an MR's dir: one file per discussion thread. A header gives the full discussion id, the type, the file and line of a diff note, `Resolved:` on resolvable threads, and the URL. Then comes one `[<created>] @<username> (note:<id>):` block per note. Bot authors get a `bot-` file name prefix and a `[BOT]` tag, service accounts their display name. A file is rewritten only when the thread changed: a new reply, an edit, a resolve. `.meta.json` maps each discussion id to its file.
+- `status-baseline.json`, `status-events.log`, `mr.json` and `external-statuses.json` in an MR's dir: what `glab-mr-status` read. See [glab-mr-status](#glab-mr-status).
 - The pipeline dump in a pipeline's dir: `pipeline.json`, `jobs.json`, `bridges.json`, the lint, test report and downstream files when they apply, and `summary.json` and `summary.txt`. See [glab-pipeline](#glab-pipeline).
 
 ## glab-watch
@@ -284,6 +286,46 @@ Before a write, the commands check what agents most often got wrong, and stop wi
 `drafts publish` submits the review with GitLab's `/submit_review` quick action. It publishes your drafts and sets the verdict on every GitLab since 16.7, where the `bulk_publish` endpoint ignores the verdict before 19.2. Before it submits, it adds you as a reviewer if you are not one and checks that GitLab did. It also removes your earlier approval or request for changes that the new verdict replaces, because GitLab before 19.2 does not replace one verdict with another. Without `--verdict` it sets `reviewed`, but only when you have given the MR no verdict yet; otherwise `--verdict` is required. Your earlier verdict comes from the MR's system notes, because a draft resets your review state. Afterwards it reads the drafts, your review state and the approvals back, and exits with 1 when the verdict was not applied.
 
 `edit draft:<id>` sends an inline draft's position back with the new text, because GitLab since 16.3 turns an inline draft into a general one on an edit without it.
+
+## glab-mr-status
+
+```bash
+glab-mr-status                                  # the current branch's MR
+glab-mr-status group/project!123 !124           # any glab-watch MR ref, or an MR URL; several at once
+glab-mr-status --mr-url <url> --mr-url <url>    # the same, as URLs
+glab-mr-status --comments                       # only the threads; --pipeline only the pipeline dump; --all both (the default)
+glab-mr-status --reset                          # forget the last read and start a new baseline
+glab-mr-status --base-dir <path>                # as glab-watch
+```
+
+`glab-mr-status` answers "what is this MR like now, and what changed since I last looked". To be told when something changes, run `glab-watch mr` instead of reading in a loop.
+
+The first read of an MR establishes a baseline and prints its state. Every later read prints one `<ID>: <detail>` line per change since the read before, then the threads, the pipeline dump and a scorecard:
+
+```text
+== gitlab.example.com/group/project!123
+  HEAD_CHANGED: 3f2a6c0d9b1e4f7a8c2d5e6f7a8b9c0d1e2fe91c -> 8b7d04aa5c3e2f1a0b9c8d7e6f5a4b3c2d1e04aa (new head)
+  PIPELINE_CHANGED: new pipeline 4568 (running) on 8b7d04aa, was 4567 (failed)
+  NOTES_CHANGED: new note by @reviewer-one at 2026-11-09T10:12:00Z
+  discussions: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/threads/ (one file per thread, …)
+    new: 2026-11-09T10-12-reviewer-one-6a1f2b3c4d5e.txt
+  pipeline dump: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/pipelines/4568/ (summary.json, jobs.json, job-logs/) · summary text: …/summary.txt
+  scorecard: gitlab.example.com/group/project!123 · opened · ready · head 8b7d04aa · pipeline running · behind 0 · conflicts no · notes 4 · approved by - · updated 2026-11-09T10:12:00Z
+state: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123
+```
+
+The change ids are `STATE_CHANGED`, `DRAFT_CHANGED`, `HEAD_CHANGED` (full SHAs, with a rebase hint when the behind count dropped to 0), `TARGET_CHANGED`, `TITLE_CHANGED`, `PIPELINE_CHANGED` (noting a pipeline that ran on a superseded base), `BEHIND_CHANGED`, `MERGE_STATUS_CHANGED`, `NOTES_CHANGED`, `DISCUSSIONS_RESOLVED_CHANGED`, `REVIEWERS_CHANGED`, `ASSIGNEES_CHANGED`, `LABELS_CHANGED`, `APPROVALS_CHANGED`, and `READ_FAILED` when an MR could not be read. In the scorecard, `approved by ?` means GitLab did not return the approvals, and `(on an older head)` means the pipeline ran on a commit that is no longer the head.
+
+Each read costs the REST merge request, its newest note, its approvals when the MR moved since the last read, and the project's default branch once. The threads cost what `glab-discussion read` costs and the pipeline dump what `glab-pipeline inspect` costs, which is two requests and one request when nothing changed. `--comments` or `--pipeline` leaves the other out.
+
+The read is printed and flushed before it is stored, so a read killed in between reports the same changes again. It stores into the MR's dir:
+
+- `status-baseline.json`: the last state this command read. A running `glab-watch` keeps its own `baseline.json`, so neither swallows a change the other has not reported.
+- `status-events.log`: every change it printed, one tab-separated line each: UTC time, MR, id, detail.
+- `mr.json`: the REST merge request; `external-statuses.json`: the head commit's statuses its pipeline did not produce, such as an outside quality gate.
+- the `threads/` dir and, in the pipeline's dir, the pipeline dump, as `glab-discussion read` and `glab-pipeline inspect` write them.
+
+The exit code is 0 for a baseline or a read, 5 when no MR could be read, 1 for an error such as no MR on the current branch, and 2 for a usage error. When some MRs of a set fail and others are read, the exit code is 0 and each failed MR has a `READ_FAILED` line.
 
 ## Platform support
 
