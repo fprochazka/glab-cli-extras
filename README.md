@@ -6,11 +6,13 @@ Extra commands for the [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`),
 - `glab-pipeline inspect` dumps a pipeline's state and job logs and prints a problem-driven summary.
 - `glab-discussion` reads a merge request's discussion threads into one file per thread, and writes comments, replies, resolves and reviews.
 
-Every GitLab request goes through `glab api`, so `glab` handles authentication, hosts, OAuth refresh, proxies and certificates. `glab-watch` never reads or stores a token. A shared per-user daemon does the polling, so ten watchers cost about as much API budget as one.
+This package supersedes the standalone [glab-pipeline](https://github.com/fprochazka/glab-pipeline) and [glab-discussion](https://github.com/fprochazka/glab-discussion) packages: their commands live here, with the same options and output.
+
+Every GitLab request goes through `glab api`, so `glab` handles authentication, hosts, OAuth refresh, proxies and certificates. No command reads or stores a token.
 
 ## Install
 
-You need Python 3.11 or later, [uv](https://docs.astral.sh/uv/), and `glab` logged in to your GitLab host (`glab auth status`).
+You need Python 3.11 or later, [uv](https://docs.astral.sh/uv/), and the `glab` CLI installed and logged in to your GitLab host (`glab auth status`).
 
 ```bash
 uv tool install glab-cli-extras
@@ -28,11 +30,31 @@ From a local checkout:
 uv tool install --editable /path/to/glab-cli-extras
 ```
 
-## Usage
+## Where files go
+
+All three commands write into the same tree, one dir per resource, so a file one command wrote is current for the others. The base dir is:
+
+- `<session scratchpad>/glab-cli-extras/` when the command runs under a Claude Code session, which Claude Code removes after a few months;
+- else `<temp dir>/glab-cli-extras-<uid>/`, private to the user, which the OS cleans;
+- or `--base-dir` for `glab-watch`, and `--output-dir` for `glab-pipeline inspect`, which names the pipeline's dir itself.
+
+The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipelines/<id>/`, `.../-/merge_requests/<iid>/`, `.../-/merge_requests/` for `glab-watch mrs` and `.../-/branches/<branch>/` for `glab-watch branch`. Each one has a `README.txt` that names its files:
+
+- `state.json`: the latest state of the pipeline or MR, written on every change.
+- `events.jsonl`: the changelog, every event a watcher reported, and `baseline.json`, the last state this watcher saw.
+- `job-logs/<stage>-<name>-<job id>.log` in a pipeline's dir: one file for every job, either the log or a placeholder. See [Job logs](#job-logs).
+- `threads/<created>-<author>-<id>.txt` in an MR's dir: one file per discussion thread. A header gives the full discussion id, the type, the file and line of a diff note, `Resolved:` on resolvable threads, and the URL. Then comes one `[<created>] @<username> (note:<id>):` block per note. Bot authors get a `bot-` file name prefix and a `[BOT]` tag, service accounts their display name. A file is rewritten only when the thread changed: a new reply, an edit, a resolve. `.meta.json` maps each discussion id to its file.
+- The pipeline dump in a pipeline's dir: `pipeline.json`, `jobs.json`, `bridges.json`, the lint, test report and downstream files when they apply, and `summary.json` and `summary.txt`. See [glab-pipeline](#glab-pipeline).
+
+## glab-watch
+
+`glab-watch` reports every change to a GitLab resource as a JSON event. A shared per-user daemon does the polling, so ten watchers cost about as much API budget as one.
+
+### Usage
 
 ```bash
 glab-watch mr group/project!123                      # a merge request; also !123 or 123 with the repo from the cwd, or the MR URL
-glab-watch pipeline group/project!4567               # a pipeline and its downstream pipelines; also the pipeline URL
+glab-watch pipeline group/project!4567               # a pipeline and its downstream pipelines; also !4567, 4567, or the pipeline URL
 glab-watch mrs group/project                         # every merge request of a project
 glab-watch branch group/project main                 # a branch; the repo is optional: glab-watch branch main
 ```
@@ -41,93 +63,44 @@ glab-watch branch group/project main                 # a branch; the repo is opt
 
 A watcher runs until its resource ends (an MR is merged or closed, a pipeline finishes), until `--until` or `--timeout` fires, or until it gets SIGTERM or Ctrl-C. `mrs` and `branch` run until stopped. The last event is always `watch_ended` with a `reason`.
 
+The exit code is 0 when the watch ends normally, 1 when the resource is not found or the daemon fails, and 2 for a usage error.
+
 ### Options
 
-All commands:
+All four resource commands take:
 
 - `--events=<kinds or groups>`: report only these. Comma-separated, repeatable. The default is every event the resource tracks.
 - `--exclude-events=<kinds or groups>`: do not report these.
 - `--until=<kind>`: stop after the first event of this kind, for example `--until=finished`.
 - `--timeout=<duration>`: stop after `90s`, `30m`, `2h` or `1h30m`.
-- `--events-stream=auto|stdout|claude-message`: where events go. See [Claude Code](#claude-code).
-- `--base-dir=<path>`: where the resource dirs go. See [Files](#files).
+- `--events-stream=auto|stdout|claude-message`: where events go. See [Output streams](#output-streams).
+- `--base-dir=<path>`: where the resource dirs go. See [Where files go](#where-files-go).
 - `--message-priority=now|next|later`: for `claude-message` only. The default is `next`.
 - `--no-daemon`: poll inside this process, with a private budget, without the shared daemon.
 
-`pipeline` also takes `--logs=failed|all|none`: which finished jobs get their log downloaded. The default is `failed`.
+`pipeline` also takes `--logs=failed|all|none`: which finished jobs get their log downloaded. The default is `failed`. `mr` does not take `--logs`; follow the `watch_command` of a pipeline event for the jobs.
 
-The filter is checked at start. An unknown kind or group, or one the resource never produces, is an error, so a typo does not silently mean "no events". The filter also saves API work: an MR watch without `comments` never fetches threads, and one without `pipeline` leaves the head pipeline out of its query.
+### Startup header
 
-## glab-pipeline
-
-```bash
-glab-pipeline inspect                              # the head pipeline of the current branch's MR
-glab-pipeline inspect --pipeline-url <url>         # an explicit pipeline
-glab-pipeline inspect --pipeline-id 1234567 --project group/project --hostname gitlab.example.com
-glab-pipeline inspect --mr-url <url>               # an MR's head pipeline; also --mr-iid with --project and --hostname
-glab-pipeline inspect --logs=all                   # every job's log, not only the failed jobs' logs
-glab-pipeline inspect --with-merged-ci-config      # two-step lint that resolves include: against the source branch
-glab-pipeline inspect --with-test-report           # the test report even without a failed test job
-glab-pipeline inspect --with-downstream-pipelines  # downstream detail for every bridge, not only failed ones
-glab-pipeline inspect --with-artefacts             # download and unpack each job's artifacts archive
-glab-pipeline inspect --json | jq                  # the summary as JSON instead of text
-glab-pipeline inspect --output-dir /path/to/dir    # write the dump there instead of the pipeline's dir
-glab-pipeline inspect --full                       # ignore what is on disk and fetch everything again
-```
-
-It is the command of the [glab-pipeline](https://github.com/fprochazka/glab-pipeline) package, with the same options and output. It writes the dump into the pipeline's dir (see [Files](#files)), the same dir `glab-watch` writes, and prints a problem-driven summary:
-
-- `pipeline.json`, `jobs.json` (retried jobs included) and `bridges.json` (when there are bridges): the GitLab API objects.
-- `job-logs/<stage>-<name>-<id>.log`: the log of every failed job, and a placeholder for every other job. `--logs=all` downloads every log.
-- `lint.json` and `merged.yml` when the pipeline has YAML errors, no jobs, or a job failed for a config reason; `test-report.json` when a test job failed; `downstream/<bridge>-<id>.json` for a failed bridge; `artifacts/<stage>-<name>-<id>/` with `--with-artefacts`.
-- `summary.json` and `summary.txt`: the summary, also printed on stdout.
-
-A rerun reuses what is on disk. The pipeline is probed through GitLab's GraphQL ETag cache with the ETag of the last dump; an unchanged pipeline answers with a 304 and the rerun makes no other request. A finished job's log is never downloaded twice.
-
-The context flags follow glab-pipeline: a URL, or `--pipeline-id`/`--mr-iid` with `--project` and `--hostname`, or nothing for the current branch's MR. A partial set, such as `--project` without `--hostname`, is an error instead of being silently ignored. `--pipeline-id` alone takes the project of the current branch's MR.
-
-## glab-discussion
-
-```bash
-glab-discussion read                     # the current branch's MR: one file per thread, then a summary of what changed
-glab-discussion read --mr-url <url>      # an explicit MR; also --mr-iid with --project and --hostname
-glab-discussion read --no-dump           # print every thread instead (the default in a terminal)
-glab-discussion read --full              # delete the thread files and write them all again
-glab-discussion write --body - < reply.md --reply-to <discussion id>     # reply to a thread
-glab-discussion write --body "…" --file src/app.py --new-line 42         # a diff note on a line of the newest diff version
-glab-discussion write --body "…" --draft                                 # a pending draft only you see
-glab-discussion resolve <discussion id>                                  # also --unresolve
-glab-discussion edit note:123 --body "…"                                 # or draft:123, as read prints the ids
-glab-discussion delete note:123
-glab-discussion diff --file src/app.py                                   # the diff with old and new line numbers
-glab-discussion drafts publish --body - < summary.md --verdict reviewed  # publish your drafts as one review
-glab-discussion drafts delete --force
-```
-
-It is the command of the [glab-discussion](https://github.com/fprochazka/glab-discussion) package, with the same options and output. `read --dump` writes the threads into the `threads/` dir of the MR's dir (see [Files](#files)), the same dir `glab-watch mr` writes, and prints the dir and the files that changed:
+On start, every watcher prints a header. Each line starts with `glab-watch: `:
 
 ```text
-Discussions: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/threads/
-  updated: 2026-11-09T09-30-reviewer-one-6a1f2b3c4d5e.txt
-  (11 discussions up to date)
+glab-watch: resource: mr gitlab.example.com/group/project!123
+glab-watch: stream: stdout (one JSON event per line)
+glab-watch: dir: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123
+glab-watch: state: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/state.json
+glab-watch: changelog: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/events.jsonl
+glab-watch: events: state_changed,draft_changed,pushed,… (always: watch_started,watch_degraded,watch_ended)
+glab-watch: ignored: thread_created,thread_updated,thread_resolved,thread_unresolved
+glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-v3.sock, log /run/user/1000/glab-cli-extras/daemon-v3.log
+glab-watch: restart with: glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123 --events=<kinds|groups> --exclude-events=<kinds|groups> (groups: status, comments, push, pipeline)
 ```
 
-A thread file is fetched again only when its notes changed since the file was written, or when your draft replies in it changed. An unchanged MR costs one GraphQL request per 100 threads and one request for your drafts. Your drafts appear as `[DRAFT]` blocks in their thread, and a draft that starts a thread as `draft-<id>.txt`. Drafts belong to the login that wrote them, so only `read` shows them: a `glab-watch mr` rewrites a changed thread without your draft replies, and the next `read` puts them back.
+The `state:` line appears for `mr` and `pipeline` only. A `pipeline` watch adds a `logs:` line, a watch with `--until` or `--timeout` adds an `ends:` line, and a `stream fallback:` line says why `auto` did not message the session.
 
-The write commands send every body as JSON on stdin, byte for byte: a trailing signature line such as `<!-- plugin:command -->` and the final newline reach GitLab unchanged. A write is never retried, because GitLab may have applied a write whose answer was lost, and a retry would post it twice. Each write command prints the URL of the MR it acted on. `GLAB_DISCUSSION_WRITE_AS_DRAFT=true` makes `write` save drafts unless `--no-draft` is given.
+The header and the other status lines (`ended: …`, errors) always go to stderr, so stdout carries only events. Claude Code puts a background task's stderr into the task output next to its stdout, so an agent sees both. A status line never starts with `{`: in merged output, every line that starts with `{` is an event.
 
-Before a write, the commands check what agents most often got wrong, and stop with exit 1 and a message that says what to do instead:
-
-- An empty or blank body, as from `--body "$(cat <missing file>)"`, is refused. Prefer `--body - < file`, which fails in the shell when the file is missing.
-- `write --file` anchors the note on the diff: on an unchanged line it adds the other side's line number, which GitLab requires there (`--new-line` alone is enough); on a renamed file it uses the old path. A line outside every hunk is refused, since GitLab takes diff notes only on changed lines and their context. If GitLab still creates a general comment, the command reports it.
-- `--reply-to` and `resolve` take the 12-character id prefix from a thread file's name too, resolved against the MR's files without a request. The full id from the `Discussion:` line is never ambiguous.
-- `resolve` reads the thread first and refuses one without a resolvable note, which GitLab answers with 403 or 404. A reply or resolve that gets 404 says whether the thread is gone (deleted, or rewritten by a force-push) or the error was transient.
-
-`drafts publish` submits the review with GitLab's `/submit_review` quick action, which publishes your drafts and sets the verdict on every GitLab since 16.7, where the `bulk_publish` endpoint ignores the verdict before 19.2. Before it submits, it adds you as a reviewer if you are not one and checks that GitLab did, and it removes your earlier approval or request for changes that the new verdict replaces, because GitLab before 19.2 does not replace one verdict with another. Without `--verdict` it sets `reviewed`, but only when you have given the MR no verdict yet; your earlier verdict comes from the MR's system notes, because a draft resets your review state. Afterwards it reads the drafts, your review state and the approvals back, and exits with 1 when the verdict was not applied. `edit draft:<id>` sends an inline draft's position back with the new text, because GitLab since 16.3 turns an inline draft into a general one on an edit without it.
-
-The context flags are all or nothing: `--mr-url`, or `--mr-iid` with `--project` and `--hostname`, or none of them for the current branch's MR. A partial set is a usage error instead of silently using the current branch's MR.
-
-## Events
+### Events
 
 Every event has `kind`, `resource`, `seq`, `observed_at` and `data`, and `artifacts` when it points at files:
 
@@ -154,49 +127,33 @@ Lifecycle events come with every resource and cannot be filtered out:
 
 One `glab-discussion drafts publish` changes the MR in up to three ways at once: a review state, `reviewers_changed` when it added you as a reviewer, and `approvals_changed` when it revoked your approval. A watcher of your own MR sees these as events like any other.
 
-`pipeline`: `status_changed`, `job_started`, `job_finished` (with the log in `artifacts` when `--logs` asks for it), `downstream_created`, `finished` (with `summary.txt` in `artifacts`).
+`pipeline`: `status_changed`, `job_started`, `job_finished` (with the log in `artifacts` when `--logs` asks for it), `downstream_created`, `finished` (with `summary.txt` in `artifacts`, and the pipeline's dir in `data.dir`). When the pipeline finishes, the watcher writes the dump `glab-pipeline inspect` writes, and the final `watch_ended` also carries `summary.txt` in `artifacts`. A later `glab-pipeline inspect` of the same pipeline in the same session finds the files current and makes one request, the ETag probe.
 
 `mrs`: `mr_opened`, `mr_updated`, `mr_merged`, `mr_closed`, `mr_reopened`. When the list shows what moved, the event has `changes: {field: [old, new]}` for `title`, `draft`, `target_branch`, `sha`, `detailed_merge_status`, `labels`, `assignees` and `reviewers`, for example `{"draft": [true, false]}` when a draft becomes ready. These come from the same list request, so they cost nothing extra.
 
 `branch`: `pushed`, `force_pushed`, `created`, `deleted`, `pipeline_created`, `pipeline_finished`. A push whose head commit is a merge commit has `merge_commit: true` and, when GitLab knows it, `merged_mr_iid`.
 
-Groups for `--events` and `--exclude-events`:
+`--events` and `--exclude-events` take kinds and these groups:
 
-| Group | Kinds |
-|---|---|
-| `status` | `state_changed`, `draft_changed`, `merge_status_changed`, `approvals_changed`, `reviewers_changed`, `title_changed`, `description_changed`, and all `mr_*` |
-| `comments` | `thread_*` |
-| `push` | `pushed`, `force_pushed`, `created`, `deleted` |
-| `pipeline` | `head_pipeline_changed`, `pipeline_status_changed`, `status_changed`, `job_*`, `downstream_created`, `finished`, `pipeline_created`, `pipeline_finished` |
-| `lifecycle` | `watch_started`, `watch_degraded`, `watch_ended`; always on |
+- `status`: `state_changed`, `draft_changed`, `merge_status_changed`, `approvals_changed`, `reviewers_changed`, `title_changed`, `description_changed`, and all `mr_*`.
+- `comments`: `thread_*`.
+- `push`: `pushed`, `force_pushed`, `created`, `deleted`.
+- `pipeline`: `head_pipeline_changed`, `pipeline_status_changed`, `status_changed`, `job_*`, `downstream_created`, `finished`, `pipeline_created`, `pipeline_finished`.
+- `lifecycle`: `watch_started`, `watch_degraded`, `watch_ended`; always on.
 
-### Files
+The filter is checked at start. An unknown kind or group, or one the resource never produces, is an error, so a typo does not silently mean "no events". The filter also saves API work: an MR watch without `comments` never fetches threads, and one without `pipeline` leaves the head pipeline out of its query.
 
-Every watcher writes what it reports into one dir per resource, under a base dir:
+### Output streams
 
-- `<session scratchpad>/glab-cli-extras/` when it runs under a Claude Code session, which Claude Code removes after a few months;
-- else `<temp dir>/glab-cli-extras-<uid>/`, private to the user, which the OS cleans;
-- or `--base-dir`.
+`--events-stream=stdout` prints one JSON event per line on stdout. Whatever the stream, the changelog `events.jsonl` in the resource dir keeps every reported event, also when nobody read the stream.
 
-The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipelines/<id>/`, `.../-/merge_requests/<iid>/`, `.../-/merge_requests/` for `mrs` and `.../-/branches/<branch>/` for `branch`. Each one has a `README.txt` that names its files:
-
-- `state.json`: the latest state of the pipeline or MR, written on every change.
-- `events.jsonl`: every event the watcher reported, and `baseline.json`, the last state this watcher saw.
-- `job-logs/<stage>-<name>-<job id>.log` in a pipeline's dir, one file for every job of a watched pipeline. A log is downloaded once, a few seconds after the job ends. A job whose log is not downloaded, because it passed and `--logs` is `failed`, or because it is still running, pending, skipped or manual, has a short placeholder in its place. The placeholder starts with `[glab-cli-extras: log not downloaded]`, says why, and gives the `glab-pipeline inspect … --logs=all` command that downloads it. `state.json` records `log_state` for each job: `downloaded`, `tail` or `placeholder`. On GitLab 19.0 and later a log above 500 KB is read as its last 500 KB only, and the file starts with a `[glab-cli-extras: last …]` line. The log of a downstream job goes to its own pipeline's dir.
-- `threads/<created>-<author>-<id>.txt` in an MR's dir, one file per discussion thread, in glab-discussion's format: a header with the full discussion id, the type, the file and line of a diff note, `Resolved:` on resolvable threads and the URL, then one `[<created>] @<username> (note:<id>):` block per note. Bot authors get a `bot-` file name prefix and a `[BOT]` tag, service accounts their display name. A file is rewritten only when the thread changed: a new reply, an edit, a resolve. `.meta.json` maps each discussion id to its file.
-- When a watched pipeline finishes, the watcher writes what `glab-pipeline inspect` writes for it: `pipeline.json`, `jobs.json`, `bridges.json`, the lint, test report and downstream files when they apply, and `summary.json` and `summary.txt`. `finished` and the final `watch_ended` carry `summary.txt` in `artifacts`, and `finished` carries the dir in `data.dir`. A later `glab-pipeline inspect` of the same pipeline in the same session finds the files current and makes one request, the ETag probe.
-
-The daemon writes no files. It fetches each log and each changed thread once, keeps it in memory for a while, and hands it to every watcher that asks, so ten watchers of one pipeline cost one download. The watchers write the files.
-
-## Claude Code
-
-Start the watcher as a background Bash task from a Claude Code session:
+`--events-stream=claude-message` sends the events to a Claude Code session as messages, through the session's messaging socket (`CLAUDE_CODE_MESSAGING_SOCKET`). It fails at start when no session accepts messages. The default, `--events-stream=auto`, picks `claude-message` when the watcher runs under a Claude Code session that accepts messages, and stdout otherwise. To use it, start the watcher as a background Bash task from the session:
 
 ```bash
 glab-watch mr group/project!123 --exclude-events=comments
 ```
 
-With the default `--events-stream=auto`, a watcher that runs under a Claude Code session which accepts messages sends its events to that session as messages, through the session's messaging socket (`CLAUDE_CODE_MESSAGING_SOCKET`). The session sees each batch as a message from `glab-watch mr group/project!123`:
+The session sees each batch as a message from `glab-watch mr group/project!123`:
 
 ```text
 <glab-cli-extras-watcher resource="mr gitlab.example.com/group/project!123" seq="18-19">
@@ -207,44 +164,22 @@ With the default `--events-stream=auto`, a watcher that runs under a Claude Code
 
 - **Paths.** The first message, the one with `watch_started`, also carries `dir="…"` and `changelog="…"`: the resource dir and its `events.jsonl`. Its `watch_started` gives the threads dir relative to that dir, and stdout and `events.jsonl` keep the full paths. Later messages leave the paths out, also after a daemon restart; each event's `artifacts` keep their absolute paths, so a file opens without the first message.
 - **Batching.** Events that arrive close together go out as one message: the first event of a burst waits up to 3 s for the rest. A batch above 64 KB is sent as a count per kind; the changelog has the full events.
-- **Priority.** `--message-priority=next` (the default) delivers into the session's running turn, at its next tool round. `later` waits until the session is idle and then starts a new turn. `now` is the most urgent.
+- **Priority.** `--message-priority=next` (the default) delivers into the session's running turn, at its next tool round. `now` also delivers into the running turn, ahead of queued work. `later` waits until the session is idle and then starts a new turn.
 - **Rate limits.** Each watcher sends as `glab-watch:<pid>`, and keeps below the session's per-sender limit; messages it cannot send yet are merged into the next one.
 - **Files.** Under a Claude Code session every file goes to `<session scratchpad>/glab-cli-extras/`, in both stream modes.
 - **Lifetime.** A `claude-message` watcher exits when its session is gone: the socket refuses the message, or the session's record is no longer live. Watchers never outlive their session.
 - **Subagents.** A watcher started from a subagent's Bash messages the main session. Claude Code has no route to a subagent.
 - **Best effort.** The session may drop a message under its own rate limit, or hold it until its user approves it, which a session in bypass-permissions mode does. The changelog always has every event.
 
-`--events-stream=stdout` keeps the events in the task output instead. `--events-stream=claude-message` fails at start when no session accepts messages.
-
 When the session's messaging does not match what the cc-blackbox SDK speaks, for example after a Claude Code update, `auto` uses stdout, and the header says why on a `glab-watch: stream fallback:` line. If that happens while the watcher runs, it prints the same line and sends the rest of the events to stdout.
 
-## Output
+### The daemon
 
-On start, every watcher prints a header. Each line starts with `glab-watch: `:
-
-```text
-glab-watch: resource: mr gitlab.example.com/group/project!123
-glab-watch: stream: stdout (one JSON event per line)
-glab-watch: dir: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123
-glab-watch: state: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/state.json
-glab-watch: changelog: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/events.jsonl
-glab-watch: events: state_changed,draft_changed,pushed,… (always: watch_started,watch_degraded,watch_ended)
-glab-watch: ignored: thread_created,thread_updated,thread_resolved,thread_unresolved
-glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-v3.sock, log /run/user/1000/glab-cli-extras/daemon-v3.log
-glab-watch: restart with: glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123 --events=<kinds|groups> --exclude-events=<kinds|groups> (groups: status, comments, push, pipeline)
-```
-
-The header and the other status lines (`ended: …`, errors) always go to stderr, so stdout carries only events. Claude Code puts a background task's stderr into the task output next to its stdout, so an agent sees both. A status line never starts with `{`: in merged output, every line that starts with `{` is an event.
-
-The changelog `events.jsonl` keeps every reported event even when nobody read the stream. It sits in the resource dir next to `state.json` and the logs or thread files; see [Files](#files).
-
-## The daemon
-
-The first watcher starts the daemon, `python -m glab_cli_extras.daemon`, as a detached process. It exits 30 s after its last watcher is gone. You never have to start it.
+The first watcher starts the daemon, `python -m glab_cli_extras.daemon`, as a detached process. It exits 30 s after its last watcher is gone. You never have to start it. If it cannot start, the watcher exits and suggests `--no-daemon`.
 
 ```bash
 glab-watch daemon status      # subscriptions, resources, request counts and budget per host; --json for everything
-glab-watch daemon logs -n 100 # the end of the daemon's log
+glab-watch daemon logs -n 100 # the end of the daemon's log, 50 lines by default
 glab-watch daemon stop        # running watchers start a new daemon on their next poll and carry on
 ```
 
@@ -254,6 +189,90 @@ glab-watch daemon stop        # running watchers start a new daemon on their nex
 - **Budget.** The daemon paces each host on GitLab's `RateLimit-Remaining` and `RateLimit-Reset` headers and uses at most half of what is left. A host without those headers gets 60 requests a minute. When the budget is short, every poll interval grows by the same factor. A 429 pauses the whole host for its `Retry-After`.
 - **Cheap probes.** Pipelines are polled through GitLab's GraphQL ETag cache: an unchanged pipeline answers with a 304 before any query runs. Base intervals: pipeline 5 s while running, MR 30 s (15 s on hosts with a high rate limit), branch pipelines 10 s, branch pushes 30 s, `mrs` 60 s.
 - **Sharing.** Watchers of the same resource share one poller. All watched branches of a project share one push-event request.
+- **No files.** The daemon writes no files. It fetches each log and each changed thread once, keeps it in memory for a while, and hands it to every watcher that asks, so ten watchers of one pipeline cost one download. The watchers write the files.
+
+## glab-pipeline
+
+```bash
+glab-pipeline inspect                              # the head pipeline of the current branch's MR
+glab-pipeline inspect --pipeline-url <url>         # an explicit pipeline
+glab-pipeline inspect --pipeline-id 1234567 --project group/project --hostname gitlab.example.com
+glab-pipeline inspect --mr-url <url>               # an MR's head pipeline; also --mr-iid with --project and --hostname
+glab-pipeline inspect --logs=all                   # every job's log, not only the failed jobs' logs
+glab-pipeline inspect --with-merged-ci-config      # two-step lint that resolves include: against the source branch
+glab-pipeline inspect --with-test-report           # the test report even without a failed test job
+glab-pipeline inspect --with-downstream-pipelines  # downstream detail for every bridge, not only failed ones
+glab-pipeline inspect --with-artefacts             # download and unpack each job's artifacts archive
+glab-pipeline inspect --json | jq                  # the summary as JSON instead of text
+glab-pipeline inspect --output-dir /path/to/dir    # write the dump there instead of the pipeline's dir
+glab-pipeline inspect --full                       # ignore what is on disk and fetch everything again
+```
+
+`inspect` writes the dump into the pipeline's dir (see [Where files go](#where-files-go)), the same dir `glab-watch pipeline` writes, and prints a problem-driven summary:
+
+- `pipeline.json`, `jobs.json` (retried jobs included) and `bridges.json` (when there are bridges): the GitLab API objects.
+- `job-logs/<stage>-<name>-<id>.log`: the log of every failed job, and a placeholder for every other job. `--logs=all` downloads every log, `--logs=none` none.
+- `lint.json` and `merged.yml` when the pipeline has YAML errors, no jobs, or a job failed for a config reason; `test-report.json` when a test job failed; `downstream/<bridge>-<id>.json` for a failed bridge; `artifacts/<stage>-<name>-<id>/` with `--with-artefacts`.
+- `summary.json` and `summary.txt`: the summary, also printed on stdout. `summary.json` is written also without `--json`.
+
+A rerun reuses what is on disk. The pipeline is probed through GitLab's GraphQL ETag cache with the ETag of the last dump; an unchanged pipeline answers with a 304 and the rerun makes no other request. A finished job's log is never downloaded twice.
+
+The context flags are a URL, or `--pipeline-id`/`--mr-iid` with `--project` and `--hostname`, or nothing for the current branch's MR. A partial set, such as `--project` without `--hostname`, is an error instead of being silently ignored. `--pipeline-id` alone takes the project of the current branch's MR.
+
+### Job logs
+
+`inspect` and `glab-watch pipeline` write the same `job-logs/` dir, one file for every job, and take the same `--logs=failed|all|none`, default `failed`. A log is downloaded once; `glab-watch` downloads it a few seconds after the job ends. The log of a downstream job goes to its own pipeline's dir.
+
+A job whose log is not downloaded, because it passed and `--logs` is `failed`, or because it is still running, pending, skipped or manual, has a short placeholder in its place. The placeholder starts with `[glab-cli-extras: log not downloaded]`, says why, and gives the `glab-pipeline inspect … --logs=all` command that downloads it. `state.json` records `log_state` for each job: `downloaded`, `tail` or `placeholder`.
+
+On GitLab 19.0 and later, a log above 500 KB is read as its last 500 KB only, and the file starts with a `[glab-cli-extras: last …]` line.
+
+## glab-discussion
+
+```bash
+glab-discussion read                     # the current branch's MR: one file per thread, then a summary of what changed
+glab-discussion read --mr-url <url>      # an explicit MR; also --mr-iid with --project and --hostname
+glab-discussion read --no-dump           # print every thread instead (the default in a terminal)
+glab-discussion read --full              # delete the thread files and write them all again
+glab-discussion write --body - < reply.md --reply-to <discussion id>     # reply to a thread
+glab-discussion write --body "…" --file src/app.py --new-line 42         # a diff note on a line of the newest diff version
+glab-discussion write --body "…" --draft                                 # a pending draft only you see
+glab-discussion resolve <discussion id>                                  # also --unresolve
+glab-discussion edit note:123 --body "…"                                 # or draft:123, as read prints the ids
+glab-discussion delete note:123
+glab-discussion diff --file src/app.py                                   # the diff with old and new line numbers; --version for an older diff version
+glab-discussion drafts publish --body - < summary.md --verdict reviewed  # publish your drafts as one review
+glab-discussion drafts delete --force                                    # without --force, list your drafts
+```
+
+`write` also takes `--old-line` and `--commit` for a diff note, and `--resolve` with `--reply-to` and `--draft` to resolve the thread when the draft is published. `--no-draft` publishes at once.
+
+`read --dump` writes the threads into the `threads/` dir of the MR's dir (see [Where files go](#where-files-go)), the same dir `glab-watch mr` writes, and prints the dir and the files that changed:
+
+```text
+Discussions: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/threads/
+  updated: 2026-11-09T09-30-reviewer-one-6a1f2b3c4d5e.txt
+  (11 discussions up to date)
+```
+
+A thread file is fetched again only when its notes changed since the file was written, or when your draft replies in it changed. An unchanged MR costs one GraphQL request per 100 threads and one request for your drafts. Your drafts appear as `[DRAFT]` blocks in their thread, and a draft that starts a thread as `draft-<id>.txt`. Drafts belong to the login that wrote them, so only `read` shows them: a `glab-watch mr` rewrites a changed thread without your draft replies, and the next `read` puts them back.
+
+The context flags are all or nothing: `--mr-url`, or `--mr-iid` with `--project` and `--hostname`, or none of them for the current branch's MR. A partial set is a usage error instead of silently using the current branch's MR.
+
+### Writes
+
+The write commands send every body as JSON on stdin, byte for byte: a trailing signature line such as `<!-- plugin:command -->` and the final newline reach GitLab unchanged. A write is never retried, because GitLab may have applied a write whose answer was lost, and a retry would post it twice. Each write command prints the URL of the MR it acted on. `GLAB_DISCUSSION_WRITE_AS_DRAFT=true` makes `write` save drafts unless `--no-draft` is given.
+
+Before a write, the commands check what agents most often got wrong, and stop with exit 1 and a message that says what to do instead:
+
+- An empty or blank body, as from `--body "$(cat <missing file>)"`, is refused. Prefer `--body - < file`, which fails in the shell when the file is missing.
+- `write --file` anchors the note on the diff: on an unchanged line it adds the other side's line number, which GitLab requires there (`--new-line` alone is enough); on a renamed file it uses the old path. A line outside every hunk is refused, since GitLab takes diff notes only on changed lines and their context. If GitLab still creates a general comment, the command reports it.
+- `--reply-to` and `resolve` take the 12-character id prefix from a thread file's name too, resolved against the MR's files without a request. The full id from the `Discussion:` line is never ambiguous.
+- `resolve` reads the thread first and refuses one without a resolvable note, which GitLab answers with 403 or 404. A reply or resolve that gets 404 says whether the thread is gone (deleted, or rewritten by a force-push) or the error was transient.
+
+`drafts publish` submits the review with GitLab's `/submit_review` quick action. It publishes your drafts and sets the verdict on every GitLab since 16.7, where the `bulk_publish` endpoint ignores the verdict before 19.2. Before it submits, it adds you as a reviewer if you are not one and checks that GitLab did. It also removes your earlier approval or request for changes that the new verdict replaces, because GitLab before 19.2 does not replace one verdict with another. Without `--verdict` it sets `reviewed`, but only when you have given the MR no verdict yet; otherwise `--verdict` is required. Your earlier verdict comes from the MR's system notes, because a draft resets your review state. Afterwards it reads the drafts, your review state and the approvals back, and exits with 1 when the verdict was not applied.
+
+`edit draft:<id>` sends an inline draft's position back with the new text, because GitLab since 16.3 turns an inline draft into a general one on an edit without it.
 
 ## Platform support
 
@@ -291,42 +310,7 @@ The tests need no network and no glab login. A fake `glab` (`tests/fakeglab.py`)
 
 ## Changelog
 
-### 0.2.0 (2026-11-09)
-
-Breaking changes for `glab-watch`, with what to do:
-
-- `glab-watch mr` no longer takes `--logs`, and passing it is an error. An MR watch reports its head pipeline at the pipeline level only. Drop the option, and run the `watch_command` of a pipeline event to follow the jobs and get their logs.
-- `--changelog-dir` is replaced by `--base-dir`, which holds every file of the watch, not only the changelog.
-- Files moved. Job logs and thread files were in `~/.cache/glab-cli-extras/`, and the changelog in `<scratchpad>/glab-watch/`. Everything now sits in one dir per resource under `<scratchpad>/glab-cli-extras/`, or `<temp dir>/glab-cli-extras-<uid>/` outside Claude Code. Take paths from the events and the startup header, never from a hard-coded pattern.
-- The watcher's own last snapshot is `baseline.json`; `state.json` is now the shared latest state of the resource.
-- Thread files are `.txt` in glab-discussion's format instead of `.md`.
-- The daemon protocol is version 3. A 0.1 daemon keeps serving its own watchers until it is idle; it does not mix with 0.2.
-
-Changes an agent that reads glab-watch output sees, and why each one leaves it as well off or better:
-
-- One dir per resource holds `state.json`, the changelog, the job logs or thread files, and a `README.txt` that names them. The startup header gains `dir:` and `state:` lines, and `watch_started` names the dir. Before, an agent looked in two trees; now any path of an event leads to the rest.
-- Thread files are the files `glab-discussion read` writes, byte for byte, with `[BOT]` tags and service-account display names. The skills that parse glab-discussion's format read them unchanged, and a `read` after a watch fetches nothing.
-- Every job of a watched pipeline has a file at its log's path. A log that was not downloaded is a placeholder that says why and gives the `glab-pipeline inspect … --logs=all` command that downloads it. Before, the file was missing, and an agent could not tell "not downloaded" from "no log".
-- A finished pipeline watch leaves the dump `glab-pipeline inspect` writes, with `summary.txt` in the `artifacts` of `finished` and `watch_ended`. An agent reads the summary instead of running another command.
-- An MR watch reports `head_pipeline_changed`, `pipeline_status_changed` and `pipeline_finished` with the failed job names, each with the `glab-watch pipeline` command, instead of every job event of the head pipeline. The MR's own events no longer drown in job events, and the job detail is one command away.
-- `approvals_changed` is no longer sent when GitLab did not return the approvals. Before, a missing field read as "every approval was removed".
-- `thread_unresolved` within two polls of a push has `after_push: true`, because GitLab can show a resolved thread unresolved for a moment after a force-push. The event is still sent.
-- `merge_status_changed` is no longer sent once the MR is merged or closed; `state_changed` already says it.
-- A message to the Claude Code session names the resource dir and the changelog only on the first message, the one with `watch_started`. Later messages carry `resource` and `seq`, and every artifact path stays absolute, so a file opens without the first message. stdout and `events.jsonl` are unchanged.
-- `watch_degraded` with the reason `daemon_mismatch` says when the running daemon is older than the watcher, and how to replace it.
-
-Added:
-
-- `glab-pipeline inspect` and `glab-discussion`, the commands of the glab-pipeline and glab-discussion packages, with their options and output. They fetch without the daemon and write into the same dirs as `glab-watch`, and a rerun fetches only what changed. Their own changes are in [glab-pipeline](#glab-pipeline) and [glab-discussion](#glab-discussion): the dump dirs moved into the base dir, a partial set of context flags is an error, failed jobs' logs are the default, and the write commands check their input before calling GitLab.
-
-Fixed:
-
-- Every command writes UTF-8 on Windows too. `glab-watch` stopped with an encoding error on an event with an emoji, such as an MR title, because Python writes a pipe in the console code page there.
-- A daemon state dir too long for a Unix socket path (104 bytes on macOS, 108 on Linux) is reported at once with the reason. The daemon used to die without a log line, and the watcher waited 10 s for it.
-
-### 0.1.0
-
-The first release, with `glab-watch`.
+See [CHANGELOG.md](https://github.com/fprochazka/glab-cli-extras/blob/master/CHANGELOG.md).
 
 ## License
 
