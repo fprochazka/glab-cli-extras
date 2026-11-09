@@ -4,6 +4,7 @@ Extra commands for the [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`),
 
 - `glab-watch` watches a merge request, a pipeline, all merge requests of a project, or a branch, and reports every change as one JSON event per line.
 - `glab-pipeline inspect` dumps a pipeline's state and job logs and prints a problem-driven summary.
+- `glab-discussion` reads a merge request's discussion threads into one file per thread.
 
 Every GitLab request goes through `glab api`, so `glab` handles authentication, hosts, OAuth refresh, proxies and certificates. `glab-watch` never reads or stores a token. A shared per-user daemon does the polling, so ten watchers cost about as much API budget as one.
 
@@ -84,6 +85,27 @@ It is the command of the [glab-pipeline](https://github.com/fprochazka/glab-pipe
 A rerun reuses what is on disk. The pipeline is probed through GitLab's GraphQL ETag cache with the ETag of the last dump; an unchanged pipeline answers with a 304 and the rerun makes no other request. A finished job's log is never downloaded twice.
 
 The context flags follow glab-pipeline: a URL, or `--pipeline-id`/`--mr-iid` with `--project` and `--hostname`, or nothing for the current branch's MR. A partial set, such as `--project` without `--hostname`, is an error instead of being silently ignored. `--pipeline-id` alone takes the project of the current branch's MR.
+
+## glab-discussion
+
+```bash
+glab-discussion read                     # the current branch's MR: one file per thread, then a summary of what changed
+glab-discussion read --mr-url <url>      # an explicit MR; also --mr-iid with --project and --hostname
+glab-discussion read --no-dump           # print every thread instead (the default in a terminal)
+glab-discussion read --full              # delete the thread files and write them all again
+```
+
+It is the command of the [glab-discussion](https://github.com/fprochazka/glab-discussion) package, with the same options and output. `read --dump` writes the threads into the `threads/` dir of the MR's dir (see [Files](#files)), the same dir `glab-watch mr` writes, and prints the dir and the files that changed:
+
+```text
+Discussions: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/threads/
+  updated: 2026-11-09T09-30-reviewer-one-6a1f2b3c4d5e.txt
+  (11 discussions up to date)
+```
+
+A thread file is fetched again only when its notes changed since the file was written, or when your draft replies in it changed. An unchanged MR costs one GraphQL request per 100 threads and one request for your drafts. Your drafts appear as `[DRAFT]` blocks in their thread, and a draft that starts a thread as `draft-<id>.txt`. Drafts belong to the login that wrote them, so only `read` shows them: a `glab-watch mr` rewrites a changed thread without your draft replies, and the next `read` puts them back.
+
+The context flags are all or nothing: `--mr-url`, or `--mr-iid` with `--project` and `--hostname`, or none of them for the current branch's MR. A partial set is a usage error instead of silently using the current branch's MR.
 
 ## Events
 

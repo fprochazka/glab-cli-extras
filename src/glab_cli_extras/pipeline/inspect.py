@@ -24,7 +24,7 @@ from typing import Any
 
 from glab_cli_extras.gitlab.client import ApiError, GitLabClient
 from glab_cli_extras.gitlab.refs import ResourceRef
-from glab_cli_extras.gitlab.retry import RetryPolicy
+from glab_cli_extras.gitlab.retry import standalone_client
 from glab_cli_extras.pipeline import extras
 from glab_cli_extras.pipeline.dump import (
     ExtrasResult,
@@ -267,4 +267,4 @@ def _download_artefacts(opts: InspectOptions, jobs: list[Job], job_ids: tuple[in
 
 
 def make_client(host: str) -> GitLabClient:
-    return GitLabClient(host, max_concurrency=MAX_PARALLEL, retry_reads=RetryPolicy())
+    return standalone_client(host, MAX_PARALLEL)

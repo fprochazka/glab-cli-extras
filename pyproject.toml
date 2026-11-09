@@ -29,6 +29,7 @@ Issues = "https://github.com/fprochazka/glab-cli-extras/issues"
 [project.scripts]
 glab-watch = "glab_cli_extras.cli.watch:main"
 glab-pipeline = "glab_cli_extras.cli.pipeline:main"
+glab-discussion = "glab_cli_extras.cli.discussion:main"
 
 [build-system]
 requires = ["hatchling"]

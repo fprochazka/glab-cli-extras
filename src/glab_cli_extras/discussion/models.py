@@ -7,7 +7,7 @@ from typing import Any
 @dataclass
 class MrContext:
     hostname: str  # e.g. "gitlab.com"
-    project_id: int  # numeric project ID
+    project_id: int | str  # the numeric project ID, or the URL-encoded project path; GitLab takes both
     project_path: str  # e.g. "group/project"
     mr_iid: int  # MR internal ID
     mr_url: str  # web URL of the MR

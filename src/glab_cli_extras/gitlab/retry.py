@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TypeVar
 
-from glab_cli_extras.gitlab.client import ApiError, RateLimited, TransportError
+from glab_cli_extras.gitlab.client import ApiError, GitLabClient, RateLimited, TransportError
 
 T = TypeVar("T")
 
@@ -50,3 +50,8 @@ class RetryPolicy:
             await self.sleep(wait + random.uniform(0, delay / 2))
             delay *= 2
         raise AssertionError("unreachable")
+
+
+def standalone_client(host: str, max_concurrency: int = 10) -> GitLabClient:
+    """The client of a command that runs without the daemon: reads retried, more requests at once."""
+    return GitLabClient(host, max_concurrency=max_concurrency, retry_reads=RetryPolicy())
