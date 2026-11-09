@@ -198,11 +198,10 @@ def run_watch(
 
     status = StatusOutput()
     try:
-        stream = open_stream(events_stream, ref, message_priority)
+        stream = open_stream(events_stream, ref, message_priority, changelog_dir, default_changelog_root(), status)
     except StreamError as exc:
         _fail(str(exc))
-    root = changelog_dir or stream.changelog_root or default_changelog_root()
-    changelog = Changelog(root, ref)
+    changelog = stream.changelog
     logs_mode: LogsMode = logs if logs in LOGS_MODES else "failed"
     try:
         backend = default_backend(no_daemon, user_cache_dir())

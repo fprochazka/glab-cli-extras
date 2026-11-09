@@ -40,6 +40,14 @@ class Sink(Protocol):
 
     def emit(self, events: list[Event]) -> None: ...
 
+    def seconds_until_flush(self) -> float | None:
+        """When a buffered batch is due, so the watcher wakes up for it; None when nothing is buffered."""
+        ...
+
+    def tick(self) -> None:
+        """Deliver a buffered batch whose time has come."""
+        ...
+
     def alive(self) -> bool:
         """False once the target is gone, which ends the watch."""
         ...
@@ -61,6 +69,12 @@ class StdoutSink:
         for event in events:
             stream.write(json.dumps(event.to_json(), ensure_ascii=False, separators=(",", ":")) + "\n")
         stream.flush()
+
+    def seconds_until_flush(self) -> float | None:
+        return None
+
+    def tick(self) -> None:
+        pass
 
     def alive(self) -> bool:
         return True

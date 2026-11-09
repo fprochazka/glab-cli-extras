@@ -244,6 +244,7 @@ class Watcher:
                     self._finish(self._end_event(self._stop_reason))
                     return EXIT_OK
                 assert self._subscription is not None
+                self.sink.tick()
                 response = self.backend.poll(self.client_id, {self._subscription: self._cursor})
                 if self._subscription in response.get("unknown", []):
                     self.status.line("daemon restarted, subscribing again")
@@ -290,6 +291,9 @@ class Watcher:
                 wait = int(response.get("next_poll_ms", 5000)) / 1000.0
                 if deadline is not None:
                     wait = max(0.0, min(wait, deadline - self.clock()))
+                flush_in = self.sink.seconds_until_flush()
+                if flush_in is not None:
+                    wait = min(wait, flush_in)
                 self._wakeup.wait(wait)
         except (BackendError, DaemonUnavailable) as exc:
             self.status.line(f"error: {exc}")

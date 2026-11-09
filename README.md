@@ -8,17 +8,15 @@ Every GitLab request goes through `glab api`, so `glab` handles authentication, 
 
 You need Python 3.11 or later, [uv](https://docs.astral.sh/uv/), and `glab` logged in to your GitLab host (`glab auth status`).
 
-From a local checkout:
+`glab-watch` depends on [claude-code-blackbox-sdk](https://github.com/fprochazka/claude-code-blackbox-sdk), which is not published yet. Until it is, the project finds the SDK as a sibling checkout (`../claude-code-blackbox-sdk`), so clone both next to each other and install from the local checkout:
 
 ```bash
-uv tool install --editable /path/to/glab-cli-extras
+git clone https://github.com/fprochazka/claude-code-blackbox-sdk
+git clone https://github.com/fprochazka/glab-cli-extras
+uv tool install --editable ./glab-cli-extras
 ```
 
-From git:
-
-```bash
-uv tool install git+https://github.com/fprochazka/glab-cli-extras
-```
+Once the SDK has a release or a git dependency, `uv tool install git+https://github.com/fprochazka/glab-cli-extras` will work without the sibling checkout.
 
 ## Usage
 
@@ -41,8 +39,9 @@ All commands:
 - `--exclude-events=<kinds or groups>`: do not report these.
 - `--until=<kind>`: stop after the first event of this kind, for example `--until=finished`.
 - `--timeout=<duration>`: stop after `90s`, `30m`, `2h` or `1h30m`.
-- `--events-stream=auto|stdout`: where events go. `auto` is `stdout`.
+- `--events-stream=auto|stdout|claude-message`: where events go. See [Claude Code](#claude-code).
 - `--changelog-dir=<path>`: where the changelog goes. See [Output](#output).
+- `--message-priority=now|next|later`: for `claude-message` only. The default is `next`.
 - `--no-daemon`: poll inside this process, with a private budget, without the shared daemon.
 
 `mr` and `pipeline` also take `--logs=failed|all|none`: which finished jobs get their log downloaded. The default is `failed`.
@@ -97,6 +96,33 @@ Job logs and thread files go to a cache shared by all watchers: `~/.cache/glab-c
 - A job log is downloaded once, a few seconds after the job ends. On GitLab 19.0 and later a log above 500 KB is read as its last 500 KB only, and the file starts with a `[glab-watch: last …]` line.
 - A thread file is `mr-<iid>/threads/<created>-<author>-<id>.md`, in the format glab-discussion uses. It is rewritten only when the thread changed: a new reply, an edit, a resolve.
 
+## Claude Code
+
+Start the watcher as a background Bash task from a Claude Code session:
+
+```bash
+glab-watch mr group/project!123 --exclude-events=comments
+```
+
+With the default `--events-stream=auto`, a watcher that runs under a Claude Code session which accepts messages sends its events to that session as messages, through the session's messaging socket (`CLAUDE_CODE_MESSAGING_SOCKET`). The session sees each batch as a message from `glab-watch mr group/project!123`:
+
+```text
+<glab-cli-extras-watcher resource="mr gitlab.example.com/group/project!123" seq="18-19" changelog="/tmp/claude-1000/…/scratchpad/glab-watch/gitlab.example.com/group/project/mr-123/events.jsonl">
+{"kind":"head_pipeline_changed","seq":18,"data":{"pipeline_id":456,"status":"running","previous_pipeline_id":455}}
+{"kind":"thread_created","seq":19,"data":{"discussion_id":"6a1f…","author":"reviewer-one","resolvable":true,"resolved":false,"notes":1},"artifacts":["/home/me/.cache/glab-cli-extras/…/threads/2026-11-09T09-30-reviewer-one-6a1f….md"]}
+</glab-cli-extras-watcher>
+```
+
+- **Batching.** Events that arrive close together go out as one message: the first event of a burst waits up to 3 s for the rest. A batch above 64 KB is sent as a count per kind; the changelog has the full events.
+- **Priority.** `--message-priority=next` (the default) delivers into the session's running turn, at its next tool round. `later` waits until the session is idle and then starts a new turn. `now` is the most urgent.
+- **Rate limits.** Each watcher sends as `glab-watch:<pid>`, and keeps below the session's per-sender limit; messages it cannot send yet are merged into the next one.
+- **Changelog.** Under a Claude Code session the changelog goes to `<session scratchpad>/glab-watch/`, in both stream modes.
+- **Lifetime.** A `claude-message` watcher exits when its session is gone: the socket refuses the message, or the session's record is no longer live. Watchers never outlive their session.
+- **Subagents.** A watcher started from a subagent's Bash messages the main session. Claude Code has no route to a subagent.
+- **Best effort.** The session may drop a message under its own rate limit, or hold it until its user approves it, which a session in bypass-permissions mode does. The changelog always has every event.
+
+`--events-stream=stdout` keeps the events in the task output instead. `--events-stream=claude-message` fails at start when no session accepts messages.
+
 ## Output
 
 On start, every watcher prints a header. Each line starts with `glab-watch: `:
@@ -136,10 +162,11 @@ glab-watch daemon stop        # running watchers start a new daemon on their nex
 ## Platform support
 
 - Linux and macOS: everything. The daemon listens on a Unix socket.
-- Windows: the daemon and the stdout stream. The daemon listens on a loopback TCP port, and every request carries a random token from a file only the user can read.
+- Windows: the daemon and the stdout stream. The daemon listens on a loopback TCP port, and every request carries a random token from a file only the user can read. The `claude-message` stream is not available.
 
 ## Limitations
 
+- **No `claude-message` on Windows.** The SDK has no Windows transport yet; `auto` picks stdout there.
 - **One glab process per request.** Starting `glab` costs tens of milliseconds. At these request rates, a few per second at most, that does not matter.
 - **The free ETag 304 is not documented by GitLab.** If GitLab starts to count those requests, pipeline watching gets slower under the budget, not more expensive.
 - **Branch pipeline probes are cheap only on quiet projects.** GitLab touches the ETag key of a project's pipelines on any pipeline change in the project. In a busy monorepo nearly every 10 s probe is a full request.
@@ -159,7 +186,7 @@ uv run mypy
 uv run pytest
 ```
 
-The tests need no network and no glab login. A fake `glab` (`tests/fakeglab.py`) answers with the response shapes recorded from a GitLab 19.5 instance, in process for the pollers and as a real executable on `PATH` for the daemon tests, which start real daemons in temporary dirs.
+Development needs the SDK checked out next to this repository, as for the install. The tests need no network and no glab login. A fake `glab` (`tests/fakeglab.py`) answers with the response shapes recorded from a GitLab 19.5 instance, in process for the pollers and as a real executable on `PATH` for the daemon tests, which start real daemons in temporary dirs.
 
 ## License
 

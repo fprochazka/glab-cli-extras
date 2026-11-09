@@ -16,6 +16,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
+  "claude-code-blackbox-sdk",
   "rich>=14",
   "typer>=0.15",
 ]
@@ -32,6 +33,10 @@ packages = ["src/glab_cli_extras"]
 
 [tool.uv]
 package = true
+
+# Local development against a sibling checkout of the SDK, which is not published yet.
+[tool.uv.sources]
+claude-code-blackbox-sdk = { path = "../claude-code-blackbox-sdk", editable = true }
 
 [dependency-groups]
 dev = [
