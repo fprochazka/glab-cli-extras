@@ -34,3 +34,6 @@ claude plugin uninstall glab-discussion@fprochazka-glab-discussion --scope user
 Two enabled plugins named `glab` collide: Claude Code loads the hooks of only one of them, and which skill wins is not defined. The old `glab-pipeline` and `glab-discussion` plugins carry Bash guards of their own, so with them still enabled a denied command comes back once per guard.
 
 ## Skills
+
+- `glab:glab-pipeline`: `glab-pipeline inspect`, the dump it writes into the pipeline's dir, and the order to read it in: the summary first, then only the files it names.
+- `glab:glab-discussion`: `glab-discussion` for reading threads into files and for writing, resolving, editing and deleting comments; the signature line on posted comments, the draft environment variable, and giving a review with a verdict.
