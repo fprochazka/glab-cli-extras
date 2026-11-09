@@ -77,7 +77,9 @@ Lifecycle events come with every resource and cannot be filtered out:
 - `merge_status_changed`: GitLab's transient `checking`, `unchecked` and `preparing` are skipped.
 - `approvals_changed`, `reviewers_changed`
 - `head_pipeline_changed`, plus every `pipeline` event of the head pipeline, with `pipeline_id` in `data`
-- `thread_created`, `thread_updated`, `thread_resolved`, `thread_unresolved`, each with the thread's file in `artifacts`
+- `thread_created`, `thread_updated`, `thread_resolved`, `thread_unresolved`, each with the thread's file in `artifacts`. GitLab can show a thread unresolved for a poll or two after a force-push; a `thread_unresolved` within two polls of a `pushed` has `after_push: true`.
+
+One `glab-discussion drafts publish` changes the MR in up to three ways at once: a review state, `reviewers_changed` when it added you as a reviewer, and `approvals_changed` when it revoked your approval. A watcher of your own MR sees these as events like any other.
 
 `pipeline`: `status_changed`, `job_started`, `job_finished` (with the log in `artifacts` when `--logs` asks for it), `downstream_created`, `finished`.
 

@@ -199,3 +199,30 @@ def test_approvals_gitlab_does_not_return_are_unknown_not_removed() -> None:
     assert [e.kind for e in diff_mr(missing, known)] == []
     later = snap(approved_by=[], approvals_left=1)
     assert [e.kind for e in diff_mr(settled, later)] == ["approvals_changed"]
+
+
+def test_an_unresolve_right_after_a_push_is_marked(clock: Clock, tmp_path: Path) -> None:
+    resolved = gql_thread("aaa111", [(1, "2026-11-09T09:00:00Z", "reviewer-one")], resolved=True)
+    unresolved = gql_thread("aaa111", [(1, "2026-11-09T09:10:00Z", "reviewer-one")], resolved=False)
+    fake = FakeGlab(
+        [
+            Route("MergeRequestSnapshot", {"data": gql_mr(threads=[resolved], head_sha=SHA1)}),
+            Route("repository/merge_base", {"id": SHA1}),
+            Route("merge_requests/42/discussions/aaa111", rest_discussion("aaa111", [(1, "reviewer-one", "x")])),
+        ]
+    )
+    poller = _poller(fake, clock, tmp_path)
+    asyncio.run(poller.poll())
+    fake.routes[0] = Route("MergeRequestSnapshot", {"data": gql_mr(threads=[resolved], head_sha=SHA2)})
+    assert kinds(asyncio.run(poller.poll())) == ["pushed"]
+    fake.routes[0] = Route("MergeRequestSnapshot", {"data": gql_mr(threads=[unresolved], head_sha=SHA2)})
+    events = asyncio.run(poller.poll())
+    unresolve = next(e for e in events if e.kind == "thread_unresolved")
+    assert unresolve.data["after_push"] is True
+    for _ in range(3):
+        asyncio.run(poller.poll())
+    fake.routes[0] = Route("MergeRequestSnapshot", {"data": gql_mr(threads=[resolved], head_sha=SHA2)})
+    asyncio.run(poller.poll())
+    fake.routes[0] = Route("MergeRequestSnapshot", {"data": gql_mr(threads=[unresolved], head_sha=SHA2)})
+    later = next(e for e in asyncio.run(poller.poll()) if e.kind == "thread_unresolved")
+    assert "after_push" not in later.data

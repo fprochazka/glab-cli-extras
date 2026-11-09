@@ -36,6 +36,7 @@ TRANSIENT_MERGE_STATUSES = frozenset({"checking", "unchecked", "preparing"})
 """GitLab reports these while it recomputes mergeability; the last settled value stays until a new one arrives."""
 TERMINAL_STATES = frozenset({"merged", "closed"})
 INTERVAL = 30.0
+AFTER_PUSH_POLLS = 2
 INTERVAL_PREMIUM = 15.0
 
 COMMENT_KINDS = GROUPS["comments"]
@@ -200,6 +201,10 @@ class MrPoller(Poller[MrSnapshot]):
     kind: ClassVar = "mr"
     snapshot_type: ClassVar = MrSnapshot
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._polls_since_push: int | None = None
+
     @property
     def _wants_threads(self) -> bool:
         return self.options.wants(*COMMENT_KINDS)
@@ -239,7 +244,7 @@ class MrPoller(Poller[MrSnapshot]):
                     data["forced_reason"] = reason
                 event = replace(event, data=data)
             resolved_events.append(event)
-        events = resolved_events
+        events = self._mark_unresolves_after_push(resolved_events)
 
         if cur.threads is not None:
             changed = {str(e.data["discussion_id"]) for e in events if e.kind in COMMENT_KINDS}
@@ -249,6 +254,19 @@ class MrPoller(Poller[MrSnapshot]):
         self.snapshot = cur
         self._check_terminal()
         return events
+
+    def _mark_unresolves_after_push(self, events: list[RawEvent]) -> list[RawEvent]:
+        """GitLab can show a thread unresolved for a poll or two after a force-push rewrote its diff note. Such an
+        unresolve is marked `after_push`, not dropped, so a real one is never lost; the reader decides."""
+        if any(e.kind == "pushed" for e in events):
+            self._polls_since_push = 0
+        elif self._polls_since_push is not None:
+            self._polls_since_push += 1
+            if self._polls_since_push > AFTER_PUSH_POLLS:
+                self._polls_since_push = None
+        if self._polls_since_push is None:
+            return events
+        return [replace(e, data={**e.data, "after_push": True}) if e.kind == "thread_unresolved" else e for e in events]
 
     def _check_terminal(self) -> None:
         if self.snapshot is not None and self.snapshot.state in TERMINAL_STATES:
