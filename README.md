@@ -81,7 +81,7 @@ Lifecycle events come with every resource and cannot be filtered out:
 
 `pipeline`: `status_changed`, `job_started`, `job_finished` (with the log in `artifacts` when `--logs` asks for it), `downstream_created`, `finished`.
 
-`mrs`: `mr_opened`, `mr_updated`, `mr_merged`, `mr_closed`, `mr_reopened`.
+`mrs`: `mr_opened`, `mr_updated`, `mr_merged`, `mr_closed`, `mr_reopened`. When the list shows what moved, the event has `changes: {field: [old, new]}` for `title`, `draft`, `target_branch`, `sha`, `detailed_merge_status`, `labels`, `assignees` and `reviewers`, for example `{"draft": [true, false]}` when a draft becomes ready. These come from the same list request, so they cost nothing extra.
 
 `branch`: `pushed`, `force_pushed`, `created`, `deleted`, `pipeline_created`, `pipeline_finished`. A push whose head commit is a merge commit has `merge_commit: true` and, when GitLab knows it, `merged_mr_iid`.
 

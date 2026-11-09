@@ -47,6 +47,37 @@ def test_an_unknown_mr_changed_after_the_start_is_an_update() -> None:
     assert kinds(events) == ["mr_updated"]
 
 
+def test_mr_updated_says_which_list_fields_moved() -> None:
+    prev = MrListSnapshot(PROJECT, "2026-11-09T10:00:00Z", "2026-11-09T10:00:00Z")
+    draft = rest_mr(7, "opened", "2026-11-09T10:01:00Z") | {
+        "draft": True,
+        "sha": OLD,
+        "detailed_merge_status": "draft_status",
+        "labels": ["backend"],
+        "reviewers": [{"username": "reviewer-one"}],
+    }
+    prev, _ = diff_mr_list(prev, [draft])
+    ready = draft | {
+        "updated_at": "2026-11-09T10:05:00Z",
+        "draft": False,
+        "detailed_merge_status": "checking",
+        "labels": ["backend", "ready-for-review"],
+        "reviewers": [{"username": "reviewer-two"}, {"username": "reviewer-one"}],
+    }
+    prev, events = diff_mr_list(prev, [ready])
+    assert kinds(events) == ["mr_updated"]
+    assert events[0].data["changes"] == {
+        "draft": [True, False],
+        "labels": [["backend"], ["backend", "ready-for-review"]],
+        "reviewers": [["reviewer-one"], ["reviewer-one", "reviewer-two"]],
+    }
+    # The transient "checking" is never reported; the settled value that follows is.
+    _, events = diff_mr_list(
+        prev, [ready | {"updated_at": "2026-11-09T10:06:00Z", "detailed_merge_status": "mergeable"}]
+    )
+    assert events[0].data["changes"] == {"detailed_merge_status": ["draft_status", "mergeable"]}
+
+
 def test_mr_list_reopen_and_close() -> None:
     prev = MrListSnapshot(PROJECT, "2026-11-09T10:00:00Z", "2026-11-09T10:00:00Z")
     prev, _ = diff_mr_list(prev, [rest_mr(1, "closed", "2026-11-09T10:00:00Z")])

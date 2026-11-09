@@ -8,7 +8,7 @@ with the next change after it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
@@ -26,6 +26,8 @@ class MrEntry:
     iid: int
     state: str
     updated_at: str
+    fields: dict[str, Any] = field(default_factory=dict)
+    """The TRACKED_FIELDS values from the last list response, to tell what an update changed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +44,61 @@ def _iso(dt: datetime) -> str:
 
 def _parse(ts: str) -> datetime:
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+TRACKED_FIELDS = (
+    "title",
+    "draft",
+    "target_branch",
+    "sha",
+    "detailed_merge_status",
+    "labels",
+    "assignees",
+    "reviewers",
+)
+"""Fields of the list response compared between polls. They come with every list response, so this costs nothing."""
+TRANSIENT_MERGE_STATUSES = frozenset({"checking", "unchecked", "preparing"})
+
+
+def _usernames(value: Any) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    return sorted(str(u.get("username")) for u in value if isinstance(u, dict) and u.get("username"))
+
+
+def tracked_fields(mr: dict[str, Any]) -> dict[str, Any]:
+    """The comparable values of the TRACKED_FIELDS present in one list item."""
+    values: dict[str, Any] = {}
+    for name in ("title", "draft", "target_branch", "sha", "detailed_merge_status"):
+        if name in mr:
+            values[name] = mr[name]
+    if isinstance(mr.get("labels"), list):
+        values["labels"] = sorted(
+            str(label.get("name", label)) if isinstance(label, dict) else str(label) for label in mr["labels"]
+        )
+    for name in ("assignees", "reviewers"):
+        users = _usernames(mr.get(name))
+        if users is not None:
+            values[name] = users
+    return values
+
+
+def changed_fields(old: dict[str, Any], new: dict[str, Any]) -> dict[str, list[Any]]:
+    """`{field: [old, new]}` for the tracked fields both sides know and that differ."""
+    changes = {}
+    for name in TRACKED_FIELDS:
+        if name in old and name in new and old[name] != new[name]:
+            if name == "detailed_merge_status" and new[name] in TRANSIENT_MERGE_STATUSES:
+                continue
+            changes[name] = [old[name], new[name]]
+    return changes
+
+
+def _settled(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    """Keep the last settled merge status while GitLab reports a transient one."""
+    if new.get("detailed_merge_status") in TRANSIENT_MERGE_STATUSES and "detailed_merge_status" in old:
+        return {**new, "detailed_merge_status": old["detailed_merge_status"]}
+    return new
 
 
 def _event_data(mr: dict[str, Any]) -> dict[str, Any]:
@@ -69,6 +126,8 @@ def diff_mr_list(prev: MrListSnapshot, items: list[dict[str, Any]]) -> tuple[MrL
         state = str(mr.get("state") or "")
         updated_at = str(mr.get("updated_at") or "")
         old = known.get(iid)
+        values = _settled(old.fields, tracked_fields(mr)) if old is not None else tracked_fields(mr)
+        changes = changed_fields(old.fields, values) if old is not None else {}
         kind: str | None = None
         if old is None:
             created_at = mr.get("created_at")
@@ -92,11 +151,14 @@ def diff_mr_list(prev: MrListSnapshot, items: list[dict[str, Any]]) -> tuple[MrL
                 kind = "mr_reopened"
             else:
                 kind = "mr_updated"
-        elif updated_at > old.updated_at:
+        elif updated_at > old.updated_at or changes:
             kind = "mr_updated"
         if kind is not None:
-            events.append(RawEvent(kind, _event_data(mr)))
-        known[iid] = MrEntry(iid, state, updated_at)
+            data = _event_data(mr)
+            if changes:
+                data["changes"] = changes
+            events.append(RawEvent(kind, data))
+        known[iid] = MrEntry(iid, state, updated_at, values)
         if updated_at:
             watermark = max(watermark, _parse(updated_at))
     snapshot = replace(prev, watermark=_iso(watermark), mrs=tuple(sorted(known.values(), key=lambda m: m.iid)))
