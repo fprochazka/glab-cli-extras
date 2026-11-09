@@ -1,0 +1,33 @@
+# Rules for bash-classify's matcher, used by glab-cli-extras-cc-hook.
+# Schema: https://github.com/fprochazka/bash-classify/schemas/match-rules.schema.json
+#
+# The shapes the hook denies for pipelines: inspecting pipelines, jobs and job
+# logs through glab's own commands or through the raw API. Agents are meant to use
+# `glab-pipeline inspect`, which dumps the whole pipeline state in one pass.
+#
+# `command` is a prefix match on the *resolved* command path, so a wrapper (`sudo`,
+# `timeout`, `bash -c`, `xargs`, `eval`), an absolute binary path, or glab's own deprecated
+# `pipe`/`pipeline` aliases for `ci` do not evade a rule — while a heredoc body or an
+# `echo` string that merely names one of these commands is not an invocation and does not
+# match.
+rules:
+  - name: ci-view
+    command: [glab, ci, view]
+
+  - name: ci-get
+    command: [glab, ci, get]
+
+  - name: ci-trace
+    command: [glab, ci, trace]
+
+  - name: pipelines-api
+    command: [glab, api]
+    any_arg_matches: 'projects/\S+/pipelines/'
+
+  - name: job-trace-api
+    command: [glab, api]
+    any_arg_matches: 'projects/\S+/jobs/\S+/trace'
+
+  - name: ci-lint-api
+    command: [glab, api]
+    any_arg_matches: 'projects/\S+/ci/lint'

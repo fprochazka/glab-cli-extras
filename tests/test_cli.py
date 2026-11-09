@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 from typer.testing import CliRunner
 
+from glab_cli_extras import __version__
 from glab_cli_extras.cli.watch import app, parse_duration
 
 runner = CliRunner()
@@ -59,3 +62,15 @@ def test_daemon_status_without_a_daemon() -> None:
 
 def test_version() -> None:
     assert runner.invoke(app, ["--version"]).output.strip() == "glab-watch 0.2.0"
+
+
+@pytest.mark.parametrize("command", ["pipeline", "discussion"])
+def test_glab_pipeline_and_glab_discussion_name_the_package_in_their_version(
+    command: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The plugin's session check tells these apart from the deprecated standalone packages by this line."""
+    module = importlib.import_module(f"glab_cli_extras.cli.{command}")
+    with pytest.raises(SystemExit) as raised:
+        module.main(["--version"])
+    assert raised.value.code == 0
+    assert capsys.readouterr().out == f"glab-cli-extras {__version__}\n"

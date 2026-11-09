@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from glab_cli_extras import __version__
 from glab_cli_extras.cli.stdio import force_utf8_stdio
 from glab_cli_extras.discussion.checks import CheckError
 from glab_cli_extras.discussion.context import ContextError
@@ -34,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="glab-discussion",
         description="CLI wrapper around GitLab Discussions REST API for managing MR discussions.",
     )
+    parser.add_argument("--version", action="version", version=f"glab-cli-extras {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # --- read ---

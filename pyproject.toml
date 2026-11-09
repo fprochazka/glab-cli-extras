@@ -16,7 +16,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "cc-blackbox>=0.2,<0.3",
+  "bash-classify>=0.14,<0.15",
+  "cc-blackbox>=0.4,<0.6",
   "rich>=14",
   "typer>=0.15",
 ]
@@ -31,6 +32,7 @@ glab-watch = "glab_cli_extras.cli.watch:main"
 glab-pipeline = "glab_cli_extras.cli.pipeline:main"
 glab-discussion = "glab_cli_extras.cli.discussion:main"
 glab-mr-status = "glab_cli_extras.cli.mr_status:main"
+glab-cli-extras-cc-hook = "glab_cli_extras.cc_hook.entry:main"
 
 [build-system]
 requires = ["hatchling"]

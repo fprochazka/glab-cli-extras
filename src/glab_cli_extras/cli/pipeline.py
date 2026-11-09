@@ -12,6 +12,7 @@ import shlex
 import sys
 from pathlib import Path
 
+from glab_cli_extras import __version__
 from glab_cli_extras.cli.stdio import force_utf8_stdio
 from glab_cli_extras.gitlab.client import ApiError
 from glab_cli_extras.gitlab.glab import GlabNotFoundError
@@ -63,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="glab-pipeline",
         description="Agent-friendly CLI for inspecting GitLab CI pipelines.",
     )
+    parser.add_argument("--version", action="version", version=f"glab-cli-extras {__version__}")
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
     inspect_parser = subparsers.add_parser(
         "inspect",

@@ -6,6 +6,7 @@ Extra commands for the [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`),
 - `glab-pipeline inspect` dumps a pipeline's state and job logs and prints a problem-driven summary.
 - `glab-discussion` reads a merge request's discussion threads into one file per thread, and writes comments, replies, resolves and reviews.
 - `glab-mr-status` reads merge requests once and reports what changed since the last read, with a one-line scorecard each.
+- `glab-cli-extras-cc-hook` is a Claude Code hook that stops an agent from inspecting pipelines or reading and writing MR discussions with raw `glab`, and names the command to use instead.
 
 This package supersedes the standalone [glab-pipeline](https://github.com/fprochazka/glab-pipeline) and [glab-discussion](https://github.com/fprochazka/glab-discussion) packages: their commands live here, with the same options and output.
 
@@ -326,6 +327,20 @@ The read is printed and flushed before it is stored, so a read killed in between
 - the `threads/` dir and, in the pipeline's dir, the pipeline dump, as `glab-discussion read` and `glab-pipeline inspect` write them.
 
 The exit code is 0 for a baseline or a read, 5 when no MR could be read, 1 for an error such as no MR on the current branch, and 2 for a usage error. When some MRs of a set fail and others are read, the exit code is 0 and each failed MR has a `READ_FAILED` line.
+
+## The Claude Code hook
+
+`glab-cli-extras-cc-hook` is a PreToolUse hook for the Bash tool. It denies a command that inspects pipelines, jobs or job logs with `glab ci view|get|trace` or the raw API (`glab api projects/…/pipelines/…`, `…/jobs/…/trace`, `…/ci/lint`), or that reads or writes MR discussions with `glab api …/notes|discussions|draft_notes`, `glab mr view --comments` or `glab mr note`. The deny reason names the rule that matched, the command to use instead and the skill that teaches it. Actions stay allowed: `glab ci list`, `glab ci status`, `glab ci run`, `glab ci retry`, the pipelines list endpoint, award emoji. The rules ship in the package, in `glab_cli_extras/cc_hook/rules/`.
+
+To register it, add it to a Claude Code settings file:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "glab-cli-extras-cc-hook", "timeout": 10}]}]}}
+```
+
+[bash-classify](https://github.com/fprochazka/bash-classify) parses the command, so a blocked command inside a wrapper (`sudo`, `timeout`, `bash -c`, `xargs`, `eval`) or behind glab's `pipe`/`pipeline` aliases is caught, and text that only names one (a heredoc, an `echo`, a commit message) is not. When bash-classify cannot fully parse a command, the hook falls back to text patterns, which also fire on such text, and the deny reason says so.
+
+Claude Code starts the hook on every Bash call. A command that does not contain `glab` is answered without parsing, in about 10 ms over the interpreter's own start; one that does takes about 55 ms over it, most of it bash-classify's import and its YAML command definitions. A hook that crashes prints nothing and exits 1, which Claude Code shows as a hook error and treats as no opinion.
 
 ## Platform support
 
