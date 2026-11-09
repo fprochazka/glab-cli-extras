@@ -4,6 +4,7 @@ The watcher finds its session through the cc-blackbox SDK and sends user message
 socket. Events received close together go out as one message: the first event of a burst waits up to 3 s for the
 rest. Each message is a `<glab-cli-extras-watcher>` block, because the receiver shows the content to the model but
 never the sender label. `seq` keeps every body unique, so the receiver's duplicate check never drops a real event.
+Only the message with `watch_started` names the resource dir and the changelog.
 
 Delivery is best effort: the receiver may rate-limit a message, or hold it until its user approves it. The changelog
 always has every event.
@@ -15,6 +16,7 @@ import json
 import os
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from html import escape
 from pathlib import Path
 
@@ -30,7 +32,7 @@ from cc_blackbox import (
     current_session,
 )
 
-from glab_cli_extras.events import Event
+from glab_cli_extras.events import WATCH_STARTED, Event
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.watch.sinks import StatusOutput, StdoutSink
 
@@ -53,11 +55,34 @@ def _event_line(event: Event) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def format_message(ref: ResourceRef, events: list[Event], changelog: Path) -> str:
-    """One message for a batch of events. Above 64 KB the body becomes a count per kind; the changelog has it all."""
+def _without_announced_dir(event: Event, directory: Path) -> Event:
+    """`watch_started` as the announcing message shows it: the head names the dir, so the summary does not repeat
+    it, and the threads dir is given relative to it. stdout and the changelog keep the full event."""
+    summary = event.data.get("summary")
+    if event.kind != WATCH_STARTED or not isinstance(summary, dict):
+        return event
+    summary = {k: v for k, v in summary.items() if not (k == "dir" and v == str(directory))}
+    threads = summary.get("threads")
+    if isinstance(threads, dict) and isinstance(threads.get("dir"), str):
+        path = Path(threads["dir"])
+        if path.is_relative_to(directory):
+            summary["threads"] = {**threads, "dir": str(path.relative_to(directory))}
+    return replace(event, data={**event.data, "summary": summary})
+
+
+def format_message(ref: ResourceRef, events: list[Event], changelog: Path, *, announce: bool = False) -> str:
+    """One message for a batch of events. Above 64 KB the body becomes a count per kind; the changelog has it all.
+
+    With `announce`, the head also names the resource dir and the changelog. The watcher announces them once, on the
+    message that carries `watch_started`: repeating two long paths on every message was most of its text.
+    """
     seqs = [e.seq for e in events]
     seq = str(seqs[0]) if min(seqs) == max(seqs) else f"{min(seqs)}-{max(seqs)}"
-    head = f'<glab-cli-extras-watcher resource="{escape(ref.key)}" seq="{seq}" changelog="{escape(str(changelog))}">'
+    attributes = f'resource="{escape(ref.key)}" seq="{seq}"'
+    if announce:
+        attributes += f' dir="{escape(str(changelog.parent))}" changelog="{escape(str(changelog))}"'
+        events = [_without_announced_dir(e, changelog.parent) for e in events]
+    head = f"<glab-cli-extras-watcher {attributes}>"
     tail = "</glab-cli-extras-watcher>"
     body = "\n".join(_event_line(e) for e in events)
     content = f"{head}\n{body}\n{tail}"
@@ -106,6 +131,7 @@ class ClaudeMessageSink:
         self._gone = False
         self._fallback: StdoutSink | None = None
         self._last_liveness = clock()
+        self._announced = False
 
     def describe(self) -> str:
         who = self.session.name or self.session.address
@@ -142,7 +168,10 @@ class ClaudeMessageSink:
         if self._fallback is not None:
             self._fallback.emit(events)
             return
-        content = format_message(self.ref, events, self.changelog)
+        # A watch_started repeated after a daemon restart (the snapshot moved meanwhile) announces nothing again.
+        announce = not self._announced and any(e.kind == WATCH_STARTED for e in events)
+        self._announced = self._announced or announce
+        content = format_message(self.ref, events, self.changelog, announce=announce)
         try:
             self.sender.send(self._socket, content)
         except SessionGone:

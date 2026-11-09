@@ -114,10 +114,36 @@ def test_a_burst_goes_out_as_one_message_after_three_seconds(receiver: Receiver,
     content = frame["message"]["content"]
     assert content.startswith('<cross-session-message from="did:glab-watch:')
     assert 'from-name="glab-watch mr group/project!42"' in content
-    assert (
-        f'<glab-cli-extras-watcher resource="{REF.key}" seq="3-4" changelog="{tmp_path / "events.jsonl"}">' in content
-    )
+    assert f'<glab-cli-extras-watcher resource="{REF.key}" seq="3-4">' in content
     assert '{"kind":"thread_created","seq":4,"data":{"discussion_id":"abc"}}' in content
+
+
+def test_only_the_first_watch_started_message_names_the_dir_and_the_changelog(
+    receiver: Receiver, clock: Clock, tmp_path: Path
+) -> None:
+    changelog = tmp_path / "res" / "events.jsonl"
+    sink = ClaudeMessageSink(
+        cast(Any, fake_session(receiver.path)), REF, changelog, "next", StatusOutput(), clock=clock
+    )
+    # The third batch is a watch_started repeated after a daemon restart: it announces nothing again.
+    res = str(tmp_path / "res")
+    started = event(
+        "watch_started", 1, summary={"iid": 42, "dir": res, "threads": {"total": 2, "dir": f"{res}/threads"}}
+    )
+    for batch in ([started, event("pushed", 2)], [event("pushed", 3)], [event("watch_started", 4)]):
+        sink.emit(batch)
+        clock.advance(3)
+        sink.tick()
+    frames = wait_frames(receiver, 3)
+    heads = [f["message"]["content"].split("<glab-cli-extras-watcher ", 1)[1].split(">", 1)[0] for f in frames]
+    # The announcing message names the dir once, in its head; the summary gives the threads dir relative to it.
+    assert '"summary":{"iid":42,"threads":{"total":2,"dir":"threads"}}' in frames[0]["message"]["content"]
+    assert heads == [
+        f'resource="{REF.key}" seq="1-2" dir="{tmp_path / "res"}" changelog="{changelog}"',
+        f'resource="{REF.key}" seq="3"',
+        f'resource="{REF.key}" seq="4"',
+    ]
+    sink.close()
 
 
 def test_watch_ended_is_sent_at_once_and_priority_is_passed(receiver: Receiver, clock: Clock, tmp_path: Path) -> None:

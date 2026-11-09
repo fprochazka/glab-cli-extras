@@ -158,12 +158,13 @@ glab-watch mr group/project!123 --exclude-events=comments
 With the default `--events-stream=auto`, a watcher that runs under a Claude Code session which accepts messages sends its events to that session as messages, through the session's messaging socket (`CLAUDE_CODE_MESSAGING_SOCKET`). The session sees each batch as a message from `glab-watch mr group/project!123`:
 
 ```text
-<glab-cli-extras-watcher resource="mr gitlab.example.com/group/project!123" seq="18-19" changelog="/tmp/claude-1000/…/scratchpad/glab-cli-extras/gitlab.example.com/group/project/-/merge_requests/123/events.jsonl">
+<glab-cli-extras-watcher resource="mr gitlab.example.com/group/project!123" seq="18-19">
 {"kind":"head_pipeline_changed","seq":18,"data":{"pipeline_id":456,"web_url":"https://gitlab.example.com/group/project/-/pipelines/456","watch_command":"glab-watch pipeline https://gitlab.example.com/group/project/-/pipelines/456","status":"running","previous_pipeline_id":455}}
 {"kind":"thread_created","seq":19,"data":{"discussion_id":"6a1f…","author":"reviewer-one","resolvable":true,"resolved":false,"notes":1},"artifacts":["/tmp/claude-1000/…/scratchpad/glab-cli-extras/…/merge_requests/123/threads/2026-11-09T09-30-reviewer-one-6a1f….txt"]}
 </glab-cli-extras-watcher>
 ```
 
+- **Paths.** The first message, the one with `watch_started`, also carries `dir="…"` and `changelog="…"`: the resource dir and its `events.jsonl`. Its `watch_started` gives the threads dir relative to that dir, and stdout and `events.jsonl` keep the full paths. Later messages leave the paths out, also after a daemon restart; each event's `artifacts` keep their absolute paths, so a file opens without the first message.
 - **Batching.** Events that arrive close together go out as one message: the first event of a burst waits up to 3 s for the rest. A batch above 64 KB is sent as a count per kind; the changelog has the full events.
 - **Priority.** `--message-priority=next` (the default) delivers into the session's running turn, at its next tool round. `later` waits until the session is idle and then starts a new turn. `now` is the most urgent.
 - **Rate limits.** Each watcher sends as `glab-watch:<pid>`, and keeps below the session's per-sender limit; messages it cannot send yet are merged into the next one.
