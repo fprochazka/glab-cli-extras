@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from glab_cli_extras.cli.stdio import force_utf8_stdio
 from glab_cli_extras.discussion.checks import CheckError
 from glab_cli_extras.discussion.context import ContextError
 from glab_cli_extras.discussion.ids import parse_note_ref
@@ -19,18 +20,6 @@ from glab_cli_extras.store.locks import LockTimeout
 
 NOTE_REF_METAVAR = "note:ID|draft:ID"
 NOTE_REF_HELP = "as 'read' prints it: note:123 for a published note, draft:123 for your pending draft"
-
-
-def _force_utf8_stdio() -> None:
-    """Bodies piped in with --body - and the discussions printed out are UTF-8, whatever the console code page is.
-
-    Without this, a cp1252 console (Windows default) makes Python mis-decode piped input and crash on emoji
-    or diacritics in the output. Streams replaced by test harnesses may lack reconfigure(); skip those.
-    """
-    for stream in (sys.stdin, sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            reconfigure(encoding="utf-8")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -177,7 +166,7 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None
 
 
 def main(argv: list[str] | None = None) -> None:
-    _force_utf8_stdio()
+    force_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

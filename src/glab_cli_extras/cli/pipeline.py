@@ -12,6 +12,7 @@ import shlex
 import sys
 from pathlib import Path
 
+from glab_cli_extras.cli.stdio import force_utf8_stdio
 from glab_cli_extras.gitlab.client import ApiError
 from glab_cli_extras.gitlab.glab import GlabNotFoundError
 from glab_cli_extras.gitlab.refs import RefError, ResourceRef, current_branch_mr, parse_mr_url, parse_pipeline_url
@@ -216,6 +217,7 @@ def _run_inspect(args: argparse.Namespace, parser: argparse.ArgumentParser) -> i
 
 
 def main(argv: list[str] | None = None) -> int:
+    force_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command != "inspect":

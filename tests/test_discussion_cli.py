@@ -115,7 +115,7 @@ class TestCli:
 class TestStdioEncoding:
     def test_main_forces_utf8_on_the_standard_streams(self) -> None:
         streams = {name: MagicMock() for name in ("stdin", "stdout", "stderr")}
-        with patch.multiple("glab_cli_extras.cli.discussion.sys", **streams), pytest.raises(SystemExit):
+        with patch.multiple("glab_cli_extras.cli.stdio.sys", **streams), pytest.raises(SystemExit):
             main(["read", "--help"])
 
         for stream in streams.values():

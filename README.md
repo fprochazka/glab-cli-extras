@@ -319,6 +319,10 @@ Added:
 
 - `glab-pipeline inspect` and `glab-discussion`, the commands of the glab-pipeline and glab-discussion packages, with their options and output. They fetch without the daemon and write into the same dirs as `glab-watch`, and a rerun fetches only what changed. Their own changes are in [glab-pipeline](#glab-pipeline) and [glab-discussion](#glab-discussion): the dump dirs moved into the base dir, a partial set of context flags is an error, failed jobs' logs are the default, and the write commands check their input before calling GitLab.
 
+Fixed:
+
+- Every command writes UTF-8 on Windows too. `glab-watch` stopped with an encoding error on an event with an emoji, such as an MR title, because Python writes a pipe in the console code page there.
+
 ### 0.1.0
 
 The first release, with `glab-watch`.

@@ -12,6 +12,7 @@ from typing import Annotated, Any, NoReturn
 import typer
 
 from glab_cli_extras import __version__
+from glab_cli_extras.cli.stdio import force_utf8_stdio
 from glab_cli_extras.daemon.lifecycle import daemon_running, stop_daemon
 from glab_cli_extras.daemon.transport import DaemonFiles, DaemonUnavailable, request
 from glab_cli_extras.events import GROUPS, KINDS_BY_RESOURCE, LIFECYCLE_KINDS, FilterError, resolve_filter
@@ -433,6 +434,7 @@ def daemon_logs(
 
 
 def main() -> None:
+    force_utf8_stdio()
     try:
         app()
     except (BackendError, DaemonUnavailable) as exc:

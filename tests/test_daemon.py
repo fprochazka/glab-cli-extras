@@ -181,7 +181,7 @@ def _watch(args: list[str], env: dict[str, str]) -> subprocess.Popen[str]:
         [sys.executable, "-c", "from glab_cli_extras.cli.watch import main; main()", *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        encoding="utf-8",
         env=env,
     )
 
@@ -244,15 +244,16 @@ def test_a_finished_watch_leaves_the_files_inspect_writes_and_inspect_then_costs
         Route("jobs/2/trace", "FAILED: unit\n"),
     )
     base = daemon_env.root / "base"
-    watch = _watch(["pipeline", PIPELINE_URL, "--events-stream=stdout", "--base-dir", str(base)], daemon_env.env())
+    env = {**daemon_env.env(), "PYTHONIOENCODING": "cp1252"}
+    watch = _watch(["pipeline", PIPELINE_URL, "--events-stream=stdout", "--base-dir", str(base)], env)
     out, err = watch.communicate(timeout=30)
     assert watch.returncode == 0, err
     ended = json.loads(out.splitlines()[-1])
     pipeline_dir = base / HOST / "group" / "project" / "-" / "pipelines" / "5001"
     assert ended["kind"] == "watch_ended" and ended["artifacts"] == [str(pipeline_dir / "summary.txt")]
     assert (pipeline_dir / "job-logs" / "test-unit-2.log").read_text() == "FAILED: unit\n"
-    watched = json.loads((pipeline_dir / "summary.json").read_text())
-    state = json.loads((pipeline_dir / "state.json").read_text())
+    watched = json.loads((pipeline_dir / "summary.json").read_text(encoding="utf-8"))
+    state = json.loads((pipeline_dir / "state.json").read_text(encoding="utf-8"))
     assert state["dump"]["etag"] == 'W/"1"'
     assert {k: v["log_state"] for k, v in state["logs"].items()} == {"1": "placeholder", "2": "downloaded"}
 
@@ -268,9 +269,10 @@ def test_a_finished_watch_leaves_the_files_inspect_writes_and_inspect_then_costs
             "--json",
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=60,
-        env={**daemon_env.env(), "GLAB_CLI_EXTRAS_BASE_DIR": str(base)},
+        # cp1252 is what Python picks for a pipe on Windows; the command must still write UTF-8.
+        env={**daemon_env.env(), "GLAB_CLI_EXTRAS_BASE_DIR": str(base), "PYTHONIOENCODING": "cp1252"},
     )
     assert inspect.returncode == 0, inspect.stderr
     new_calls = [json.loads(line) for line in daemon_env.calls.read_text().splitlines()[calls_before:]]
