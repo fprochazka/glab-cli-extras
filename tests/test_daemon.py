@@ -115,8 +115,15 @@ def test_the_daemon_hands_a_large_log_to_its_clients_and_fetches_it_once(daemon_
         Route("jobs/1/trace", trace),
     )
     ensure_daemon(daemon_env.files)
-    _subscribe(daemon_env.files, "client-a")
-    wait_for(lambda: daemon_env.calls.exists() and "graphql" in daemon_env.calls.read_text(), 15, "the first poll")
+    subscription = _subscribe(daemon_env.files, "client-a")["subscription_id"]
+
+    def snapshot_parsed() -> bool:
+        # The daemon queues watch_started only after it parsed the first tree. Until then it does not know that job 1
+        # ended, and a fetch of its log is not cached, so the second fetch below would reach GitLab again.
+        poll = {"op": "poll", "client_id": "client-a", "cursors": {subscription: 0}}
+        return bool(daemon_request(daemon_env.files, poll)["events"].get(subscription))
+
+    wait_for(snapshot_parsed, 30, "the first snapshot")
     payload = {"op": "fetch_job_log", "host": HOST, "project": PROJECT, "job_id": 1}
     first = decode_log(daemon_request(daemon_env.files, payload, timeout=30)["log"])
     second = decode_log(daemon_request(daemon_env.files, payload, timeout=30)["log"])
