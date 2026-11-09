@@ -5,7 +5,7 @@ description = "Extra commands for the GitLab CLI (glab): glab-watch reports chan
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Filip Procházka", email = "dev@fprochazka.cz" }]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -53,7 +53,7 @@ test = ["pytest>=8"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -67,7 +67,7 @@ quote-style = "double"
 
 [tool.mypy]
 strict = true
-python_version = "3.11"
+python_version = "3.12"
 files = ["src", "tests"]
 mypy_path = "src"
 

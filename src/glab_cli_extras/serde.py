@@ -12,9 +12,7 @@ import hashlib
 import json
 import types
 import typing
-from typing import Any, TypeVar, get_args, get_origin, get_type_hints
-
-T = TypeVar("T")
+from typing import Any, get_args, get_origin, get_type_hints
 
 
 def to_jsonable(value: Any) -> Any:
@@ -61,7 +59,7 @@ def _convert(tp: Any, data: Any) -> Any:
     return data
 
 
-def from_jsonable(cls: type[T], data: Any) -> T:
+def from_jsonable[T](cls: type[T], data: Any) -> T:
     """Rebuild a dataclass from `to_jsonable` output. Raises ValueError on a shape mismatch."""
     try:
         result = _convert(cls, data)

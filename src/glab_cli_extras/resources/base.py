@@ -11,7 +11,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar
 
 from glab_cli_extras.daemon.cache import ByteBoundedCache
 from glab_cli_extras.events import RawEvent
@@ -82,10 +82,7 @@ class PollContext:
     threads: ByteBoundedCache[dict[str, Any]] = field(default_factory=ByteBoundedCache)
 
 
-S = TypeVar("S")
-
-
-class Poller(ABC, Generic[S]):
+class Poller[S](ABC):
     kind: ClassVar[ResourceKind]
     snapshot_type: ClassVar[type[Any]]
 

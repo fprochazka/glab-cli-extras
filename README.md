@@ -12,7 +12,7 @@ Every GitLab request goes through `glab api`, so `glab` handles authentication, 
 
 ## Install
 
-You need Python 3.11 or later, [uv](https://docs.astral.sh/uv/), and the `glab` CLI installed and logged in to your GitLab host (`glab auth status`).
+You need Python 3.12 or later, [uv](https://docs.astral.sh/uv/), and the `glab` CLI installed and logged in to your GitLab host (`glab auth status`).
 
 ```bash
 uv tool install glab-cli-extras

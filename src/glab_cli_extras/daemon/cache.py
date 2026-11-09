@@ -8,14 +8,11 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Hashable
-from typing import Generic, TypeVar
-
-V = TypeVar("V")
 
 DEFAULT_MAX_BYTES = 64 * 1024 * 1024
 
 
-class ByteBoundedCache(Generic[V]):
+class ByteBoundedCache[V]:
     def __init__(self, max_bytes: int = DEFAULT_MAX_BYTES) -> None:
         self.max_bytes = max_bytes
         self.bytes = 0
