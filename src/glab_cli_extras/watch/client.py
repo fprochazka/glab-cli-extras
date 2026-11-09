@@ -1,0 +1,312 @@
+"""The watcher: subscribe through a backend, poll for events, write the changelog, deliver to a sink.
+
+Two backends share one interface. `DaemonBackend` talks to the shared per-user daemon and restarts it when it
+disappears. `InProcessBackend` (`--no-daemon`) runs the same engine in a thread of this process, with a private
+budget.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import concurrent.futures
+import contextlib
+import signal
+import threading
+import time
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from pathlib import Path
+from types import FrameType
+from typing import Any, Protocol, TypeVar
+
+from glab_cli_extras.artifacts.job_logs import LogsMode
+from glab_cli_extras.daemon.engine import Engine
+from glab_cli_extras.daemon.lifecycle import ensure_daemon
+from glab_cli_extras.daemon.transport import DaemonFiles, DaemonUnavailable, request
+from glab_cli_extras.events import WATCH_ENDED, WATCH_STARTED, Event, utc_now_iso
+from glab_cli_extras.gitlab.refs import ResourceRef
+from glab_cli_extras.watch.changelog import Changelog
+from glab_cli_extras.watch.sinks import Sink, StatusOutput
+
+T = TypeVar("T")
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+
+
+class BackendError(RuntimeError):
+    pass
+
+
+class Backend(Protocol):
+    def describe(self) -> str: ...
+
+    def subscribe(
+        self, client_id: str, ref: ResourceRef, events: frozenset[str], logs: LogsMode, baseline: Any
+    ) -> tuple[str, int]: ...
+
+    def poll(self, client_id: str, cursors: dict[str, int]) -> dict[str, Any]: ...
+
+    def unsubscribe(self, client_id: str, subscription_id: str) -> None: ...
+
+    def close(self) -> None: ...
+
+
+def _subscribe_payload(
+    client_id: str, ref: ResourceRef, events: frozenset[str], logs: LogsMode, baseline: Any
+) -> dict[str, Any]:
+    options: dict[str, Any] = {"events": sorted(events), "logs": logs}
+    if baseline is not None:
+        options["baseline"] = baseline
+    return {"op": "subscribe", "client_id": client_id, "resource": ref.to_wire(), "options": options}
+
+
+class DaemonBackend:
+    def __init__(self, files: DaemonFiles | None = None) -> None:
+        self.files = files or DaemonFiles.default()
+        self.hello = ensure_daemon(self.files)
+
+    def describe(self) -> str:
+        return f"pid {self.hello.get('pid')}, endpoint {self.files.describe_endpoint()}, log {self.files.log}"
+
+    def _call(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            response = request(self.files, payload)
+        except DaemonUnavailable:
+            # The daemon exited (idle, crash, or stopped by hand). Start a new one; subscriptions then come back
+            # as unknown and the watcher subscribes again.
+            self.hello = ensure_daemon(self.files)
+            response = request(self.files, payload)
+        if not response.get("ok"):
+            raise BackendError(str(response.get("error", "the daemon refused the request")))
+        return response
+
+    def subscribe(
+        self, client_id: str, ref: ResourceRef, events: frozenset[str], logs: LogsMode, baseline: Any
+    ) -> tuple[str, int]:
+        response = self._call(_subscribe_payload(client_id, ref, events, logs, baseline))
+        return str(response["subscription_id"]), int(response["cursor"])
+
+    def poll(self, client_id: str, cursors: dict[str, int]) -> dict[str, Any]:
+        return self._call({"op": "poll", "client_id": client_id, "cursors": cursors})
+
+    def unsubscribe(self, client_id: str, subscription_id: str) -> None:
+        self._call({"op": "unsubscribe", "client_id": client_id, "subscription_id": subscription_id})
+
+    def close(self) -> None:
+        pass
+
+
+class InProcessBackend:
+    """The engine on its own event loop in a daemon thread. Calls hop onto that loop and wait for the result."""
+
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+        self._loop = asyncio.new_event_loop()
+        self._stop: asyncio.Event | None = None
+        self._ready = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="glab-watch-engine", daemon=True)
+        self._thread.start()
+        self._ready.wait()
+
+    def _run(self) -> None:
+        asyncio.set_event_loop(self._loop)
+
+        async def main() -> None:
+            self._stop = asyncio.Event()
+            self._ready.set()
+            await self.engine.run(self._stop)
+
+        self._loop.run_until_complete(main())
+
+    def _call(self, fn: Callable[[], T]) -> T:
+        future: concurrent.futures.Future[T] = concurrent.futures.Future()
+
+        def invoke() -> None:
+            try:
+                future.set_result(fn())
+            except BaseException as exc:
+                future.set_exception(exc)
+
+        self._loop.call_soon_threadsafe(invoke)
+        return future.result(timeout=30)
+
+    def describe(self) -> str:
+        return "in-process (--no-daemon), private budget"
+
+    def subscribe(
+        self, client_id: str, ref: ResourceRef, events: frozenset[str], logs: LogsMode, baseline: Any
+    ) -> tuple[str, int]:
+        result = self._call(lambda: self.engine.subscribe(client_id, ref, events, logs, baseline))
+        return str(result["subscription_id"]), int(result["cursor"])
+
+    def poll(self, client_id: str, cursors: dict[str, int]) -> dict[str, Any]:
+        return self._call(lambda: self.engine.poll(client_id, cursors))
+
+    def unsubscribe(self, client_id: str, subscription_id: str) -> None:
+        self._call(lambda: self.engine.unsubscribe(client_id, subscription_id))
+
+    def close(self) -> None:
+        stop = self._stop
+        if stop is not None:
+            self._loop.call_soon_threadsafe(stop.set)
+        self._thread.join(timeout=10)
+
+
+@dataclass(frozen=True)
+class WatchSettings:
+    ref: ResourceRef
+    events: frozenset[str]
+    logs: LogsMode = "failed"
+    until: str | None = None
+    timeout: float | None = None
+
+
+class Watcher:
+    def __init__(
+        self,
+        settings: WatchSettings,
+        backend: Backend,
+        sink: Sink,
+        changelog: Changelog,
+        status: StatusOutput,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.settings = settings
+        self.backend = backend
+        self.sink = sink
+        self.changelog = changelog
+        self.status = status
+        self.clock = clock
+        self.client_id = uuid.uuid4().hex
+        self._stop_reason: str | None = None
+        self._wakeup = threading.Event()
+        self._subscription: str | None = None
+        # The daemon's sequence number of the last event received. It restarts when the daemon restarts, so it is
+        # only the poll cursor. Emitted events carry the watcher's own `_seq`, which never goes back.
+        self._cursor = 0
+        self._seq = 0
+        self._snapshot_hash: str | None = None
+
+    def request_stop(self, reason: str = "stopped") -> None:
+        self._stop_reason = reason
+        self._wakeup.set()
+
+    def _install_signal_handlers(self) -> None:
+        if threading.current_thread() is not threading.main_thread():
+            return
+
+        def handler(signum: int, frame: FrameType | None) -> None:
+            self.request_stop(f"signal {signal.Signals(signum).name}")
+
+        signal.signal(signal.SIGTERM, handler)
+        signal.signal(signal.SIGINT, handler)
+
+    def _subscribe(self, resubscribe: bool) -> None:
+        baseline = None
+        if resubscribe:
+            stored = self.changelog.load_state()
+            baseline = stored.snapshot if stored else None
+        s = self.settings
+        self._subscription, self._cursor = self.backend.subscribe(self.client_id, s.ref, s.events, s.logs, baseline)
+
+    def _next_seq(self) -> int:
+        self._seq += 1
+        return self._seq
+
+    def _end_event(self, reason: str, **data: Any) -> Event:
+        return Event(WATCH_ENDED, self.settings.ref.key, self._next_seq(), utc_now_iso(), {"reason": reason, **data})
+
+    def _deliver(self, events: list[Event]) -> None:
+        if not events:
+            return
+        self.changelog.append(events)
+        self.sink.emit(events)
+
+    def run(self) -> int:
+        self._install_signal_handlers()
+        if self.settings.timeout is not None:
+            deadline: float | None = self.clock() + self.settings.timeout
+        else:
+            deadline = None
+        stored = self.changelog.load_state()
+        self._snapshot_hash = stored.snapshot_hash if stored else None
+        # Continue the changelog's numbering, so events.jsonl stays strictly increasing across watcher runs too.
+        self._seq = self.changelog.last_seq()
+        resubscribed = False
+        exit_code = EXIT_OK
+        try:
+            self._subscribe(resubscribe=False)
+            while True:
+                if self._stop_reason is not None:
+                    self._finish(self._end_event(self._stop_reason))
+                    return EXIT_OK
+                assert self._subscription is not None
+                response = self.backend.poll(self.client_id, {self._subscription: self._cursor})
+                if self._subscription in response.get("unknown", []):
+                    self.status.line("daemon restarted, subscribing again")
+                    self._subscribe(resubscribe=True)
+                    resubscribed = True
+                    continue
+                snapshot = (response.get("snapshots") or {}).get(self._subscription)
+                if snapshot:
+                    previous_hash = self._snapshot_hash
+                    self._snapshot_hash = str(snapshot["hash"])
+                    self.changelog.save_state(self._snapshot_hash, snapshot.get("data"))
+                else:
+                    previous_hash = self._snapshot_hash
+                raw = [Event.from_json(e) for e in (response.get("events") or {}).get(self._subscription) or []]
+                for event in raw:
+                    self._cursor = max(self._cursor, event.seq)
+                events = [e for e in raw if e.kind in self.settings.events]
+                if resubscribed and any(e.kind == WATCH_STARTED for e in events):
+                    # After a daemon restart, the new watch_started repeats what we already know unless the
+                    # snapshot moved; changes in between arrive as normal events, diffed against our stored snapshot.
+                    events = [
+                        e
+                        for e in events
+                        if not (e.kind == WATCH_STARTED and e.data.get("snapshot_hash") == previous_hash)
+                    ]
+                    resubscribed = False
+                events = [replace(e, seq=self._next_seq()) for e in events]
+                ended = next((e for e in events if e.kind == WATCH_ENDED), None)
+                hit = next((e for e in events if self.settings.until and e.kind == self.settings.until), None)
+                self._deliver(events)
+                if ended is not None:
+                    reason = str(ended.data.get("reason"))
+                    self.status.line(f"ended: {reason}")
+                    return EXIT_ERROR if reason == "not_found" else EXIT_OK
+                if hit is not None:
+                    self._finish(self._end_event("until", event=hit.kind, seq=hit.seq))
+                    return EXIT_OK
+                if not self.sink.alive():
+                    self._finish(self._end_event("session_gone"))
+                    return EXIT_OK
+                if deadline is not None and self.clock() >= deadline:
+                    self._finish(self._end_event("timeout"))
+                    return EXIT_OK
+                wait = int(response.get("next_poll_ms", 5000)) / 1000.0
+                if deadline is not None:
+                    wait = max(0.0, min(wait, deadline - self.clock()))
+                self._wakeup.wait(wait)
+        except (BackendError, DaemonUnavailable) as exc:
+            self.status.line(f"error: {exc}")
+            exit_code = EXIT_ERROR
+            return exit_code
+        finally:
+            if self._subscription is not None:
+                with contextlib.suppress(BackendError, DaemonUnavailable, OSError, TimeoutError):
+                    self.backend.unsubscribe(self.client_id, self._subscription)
+            self.sink.close()
+
+    def _finish(self, event: Event) -> None:
+        self._deliver([event])
+        self.status.line(f"ended: {event.data.get('reason')}")
+
+
+def default_backend(no_daemon: bool, cache_root: Path) -> Backend:
+    if no_daemon:
+        return InProcessBackend(Engine(cache_root=cache_root))
+    return DaemonBackend()

@@ -1,0 +1,8 @@
+query BranchPipelines($project: ID!, $ref: String!) {
+  project(fullPath: $project) {
+    id
+    pipelines(ref: $ref, first: 10) {
+      nodes { id iid status sha path createdAt }
+    }
+  }
+}

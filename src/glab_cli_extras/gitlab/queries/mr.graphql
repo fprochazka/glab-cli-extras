@@ -1,0 +1,42 @@
+query MergeRequestSnapshot(
+  $project: ID!
+  $iid: String!
+  $withThreads: Boolean!
+  $withPipeline: Boolean!
+  $threadsAfter: String
+) {
+  project(fullPath: $project) {
+    mergeRequest(iid: $iid) {
+      iid
+      state
+      title
+      description
+      draft
+      detailedMergeStatus
+      diffHeadSha
+      sourceBranch
+      targetBranch
+      webUrl
+      approved
+      approvalsLeft
+      approvedBy { nodes { username } }
+      reviewers { nodes { username } }
+      headPipeline @include(if: $withPipeline) {
+        id
+        status
+        project { fullPath }
+      }
+      discussions(first: 100, after: $threadsAfter) @include(if: $withThreads) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          resolvable
+          resolved
+          notes(first: 100) {
+            nodes { id updatedAt system author { username } }
+          }
+        }
+      }
+    }
+  }
+}
