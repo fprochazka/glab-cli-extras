@@ -15,12 +15,13 @@ import json
 import os
 import secrets
 import socket
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from glab_cli_extras.paths import daemon_state_dir, ensure_private_dir
+from glab_cli_extras.paths import STATE_DIR_ENV, daemon_state_dir, ensure_private_dir
 
 PROTOCOL_VERSION = 3
 MAX_LINE = 64 * 1024 * 1024
@@ -37,6 +38,23 @@ class DaemonUnavailable(ConnectionError):
 class DaemonMismatch(RuntimeError):
     """The daemon does not know a request: it runs other code than the client under the same protocol version, as
     with an editable install whose daemon was started before the code changed."""
+
+
+MAX_SOCKET_PATH_BYTES = 103 if sys.platform == "darwin" else 107
+"""The longest Unix socket path the OS takes: `sun_path` holds 104 bytes on macOS and 108 on Linux, with a NUL."""
+
+
+def check_socket_path(files: DaemonFiles) -> None:
+    """Fail with a clear message when the socket path is too long for a Unix socket. Without this, the daemon dies
+    at bind with only an empty log, and the watcher waits out its start timeout."""
+    if use_tcp():
+        return
+    length = len(os.fsencode(files.socket))
+    if length > MAX_SOCKET_PATH_BYTES:
+        raise DaemonUnavailable(
+            f"the daemon socket path {files.socket} is {length} bytes, above the {MAX_SOCKET_PATH_BYTES}-byte limit of"
+            f" Unix sockets; set {STATE_DIR_ENV} to a shorter dir"
+        )
 
 
 def use_tcp() -> bool:

@@ -26,7 +26,14 @@ from typing import Any
 from glab_cli_extras import __version__
 from glab_cli_extras.daemon.engine import DEFAULT_CLIENT_POLL_MS, DEFAULT_LEASE_TIMEOUT, Engine
 from glab_cli_extras.daemon.server import handle
-from glab_cli_extras.daemon.transport import DaemonFiles, DaemonUnavailable, request, start_server, use_tcp
+from glab_cli_extras.daemon.transport import (
+    DaemonFiles,
+    DaemonUnavailable,
+    check_socket_path,
+    request,
+    start_server,
+    use_tcp,
+)
 from glab_cli_extras.paths import ensure_private_dir
 from glab_cli_extras.store.locks import FileLock
 
@@ -192,6 +199,7 @@ def ensure_daemon(files: DaemonFiles, timeout: float = SPAWN_TIMEOUT) -> dict[st
     hello = ping(files)
     if hello is not None:
         return hello
+    check_socket_path(files)
     with FileLock(files.spawn_lock) as spawn_lock:
         spawn_lock.acquire(timeout)
         deadline = time.monotonic() + timeout

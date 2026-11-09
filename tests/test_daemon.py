@@ -25,7 +25,7 @@ import pytest
 from fakeglab import Route, install_fake_glab, write_spec
 from glab_cli_extras.daemon.lifecycle import daemon_running, ensure_daemon, spawn_daemon, stop_daemon
 from glab_cli_extras.daemon.server import decode_log
-from glab_cli_extras.daemon.transport import PROTOCOL_VERSION, DaemonFiles
+from glab_cli_extras.daemon.transport import PROTOCOL_VERSION, DaemonFiles, DaemonUnavailable, use_tcp
 from glab_cli_extras.daemon.transport import request as daemon_request
 from shapes import HOST, PROJECT, gql_job, gql_pipeline
 
@@ -129,6 +129,15 @@ def test_the_daemon_hands_a_large_log_to_its_clients_and_fetches_it_once(daemon_
     second = decode_log(daemon_request(daemon_env.files, payload, timeout=30)["log"])
     assert len(first.body) > 1_000_000 and first.body == second.body == trace.encode()
     assert daemon_env.calls.read_text().count("jobs/1/trace") == 1
+
+
+@pytest.mark.skipif(use_tcp(), reason="only a Unix socket has a path length limit")
+def test_a_socket_path_too_long_for_a_unix_socket_fails_at_once_with_the_reason(tmp_path: Path) -> None:
+    files = DaemonFiles(tmp_path / ("d" * 120))
+    with pytest.raises(
+        DaemonUnavailable, match=r"above the 10[37]-byte limit of Unix sockets; set GLAB_CLI_EXTRAS_STATE_DIR"
+    ):
+        ensure_daemon(files)
 
 
 def test_a_second_daemon_exits_at_once(daemon_env: DaemonEnv) -> None:

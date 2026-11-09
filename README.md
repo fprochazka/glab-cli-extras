@@ -322,6 +322,7 @@ Added:
 Fixed:
 
 - Every command writes UTF-8 on Windows too. `glab-watch` stopped with an encoding error on an event with an emoji, such as an MR title, because Python writes a pipe in the console code page there.
+- A daemon state dir too long for a Unix socket path (104 bytes on macOS, 108 on Linux) is reported at once with the reason. The daemon used to die without a log line, and the watcher waited 10 s for it.
 
 ### 0.1.0
 
