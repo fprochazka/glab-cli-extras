@@ -134,6 +134,7 @@ def print_header(
     backend: Backend,
     until: str | None,
     timeout: str | None,
+    fallback: str | None = None,
 ) -> None:
     """The startup header: what is watched, how events are delivered, and how to restart with other options."""
     tracked = KINDS_BY_RESOURCE[ref.kind]
@@ -141,6 +142,8 @@ def print_header(
     ignored = [k for k in tracked if k not in events]
     status.line(f"resource: {ref.key}")
     status.line(f"stream: {sink.describe()}")
+    if fallback:
+        status.line(f"stream fallback: not messaging the Claude Code session: {fallback}")
     status.line(f"changelog: {changelog.events_path}")
     status.line(f"events: {','.join(subscribed) or '(none)'} (always: {','.join(LIFECYCLE_KINDS)})")
     status.line(f"ignored: {','.join(ignored) or '(none)'}")
@@ -208,7 +211,16 @@ def run_watch(
     except (DaemonUnavailable, TimeoutError) as exc:
         _fail(f"cannot start the daemon: {exc}; retry with --no-daemon to poll without it", 1)
     print_header(
-        status, ref, stream.sink, changelog, selected, logs if logs is not None else None, backend, until, timeout
+        status,
+        ref,
+        stream.sink,
+        changelog,
+        selected,
+        logs if logs is not None else None,
+        backend,
+        until,
+        timeout,
+        stream.fallback,
     )
     watcher = Watcher(
         WatchSettings(ref, selected, logs_mode, until, timeout_s), backend, stream.sink, changelog, status

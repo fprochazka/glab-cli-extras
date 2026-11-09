@@ -8,10 +8,10 @@ Every GitLab request goes through `glab api`, so `glab` handles authentication, 
 
 You need Python 3.11 or later, [uv](https://docs.astral.sh/uv/), and `glab` logged in to your GitLab host (`glab auth status`).
 
-`glab-watch` depends on [claude-code-blackbox-sdk](https://github.com/fprochazka/claude-code-blackbox-sdk), which is not published yet. Until it is, the project finds the SDK as a sibling checkout (`../claude-code-blackbox-sdk`), so clone both next to each other and install from the local checkout:
+`glab-watch` depends on [cc-blackbox](https://github.com/fprochazka/cc-blackbox), which is not published yet. Until it is, the project finds the SDK as a sibling checkout (`../cc-blackbox`), so clone both next to each other and install from the local checkout:
 
 ```bash
-git clone https://github.com/fprochazka/claude-code-blackbox-sdk
+git clone https://github.com/fprochazka/cc-blackbox
 git clone https://github.com/fprochazka/glab-cli-extras
 uv tool install --editable ./glab-cli-extras
 ```
@@ -122,6 +122,8 @@ With the default `--events-stream=auto`, a watcher that runs under a Claude Code
 - **Best effort.** The session may drop a message under its own rate limit, or hold it until its user approves it, which a session in bypass-permissions mode does. The changelog always has every event.
 
 `--events-stream=stdout` keeps the events in the task output instead. `--events-stream=claude-message` fails at start when no session accepts messages.
+
+When the session's messaging does not match what the cc-blackbox SDK speaks, for example after a Claude Code update, `auto` uses stdout, and the header says why on a `glab-watch: stream fallback:` line. If that happens while the watcher runs, it prints the same line and sends the rest of the events to stdout.
 
 ## Output
 

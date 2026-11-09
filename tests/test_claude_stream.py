@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from cc_blackbox import UnsupportedProtocol
 
 from conftest import Clock
 from glab_cli_extras.events import Event
@@ -77,6 +78,7 @@ def fake_session(socket_path: Path, scratchpad: Path | None = None) -> Any:
         messaging_socket=socket_path,
         can_receive_messages=True,
         scratchpad_dir=scratchpad,
+        compatibility=SimpleNamespace(compatible=True, reasons=()),
     )
 
 
@@ -175,7 +177,7 @@ def test_stream_selection(receiver: Receiver, tmp_path: Path, monkeypatch: pytes
     plain = streams.open_stream("auto", REF, "next", None, tmp_path / "default", status)
     assert isinstance(plain.sink, StdoutSink)
     assert plain.changelog.dir.is_relative_to(tmp_path / "default")
-    with pytest.raises(streams.StreamError, match="needs a Claude Code session"):
+    with pytest.raises(streams.StreamError, match="no Claude Code session found"):
         streams.open_stream("claude-message", REF, "next", None, tmp_path / "default", status)
 
     scratchpad = tmp_path / "scratchpad"
@@ -198,3 +200,58 @@ def test_claude_messages_carry_the_watcher_numbering(tmp_path: Path) -> None:
     run(backend, changelog, out)
     events = [Event.from_json(json.loads(line)) for line in out.getvalue().splitlines()]
     assert 'seq="1-2"' in format_message(WATCHED, events, changelog.events_path)
+
+
+def test_an_incompatible_session_falls_back_to_stdout_with_a_reason(
+    receiver: Receiver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = fake_session(receiver.path, tmp_path / "scratchpad")
+    session.can_receive_messages = False
+    reason = "messaging: the record speaks peer protocol 2, and this cc-blackbox version speaks 1."
+    session.compatibility = SimpleNamespace(compatible=False, reasons=(reason,))
+    monkeypatch.setattr(streams, "find_session", lambda: session)
+    status = StatusOutput()
+    chosen = streams.open_stream("auto", REF, "next", None, tmp_path / "default", status)
+    assert isinstance(chosen.sink, StdoutSink)
+    assert chosen.fallback is not None and "peer protocol 2" in chosen.fallback
+    # The changelog still goes to the scratchpad: only messaging is incompatible.
+    assert chosen.changelog.dir.is_relative_to(tmp_path / "scratchpad")
+    with pytest.raises(streams.StreamError, match="peer protocol 2"):
+        streams.open_stream("claude-message", REF, "next", None, tmp_path / "default", status)
+
+
+class RefusingSender:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.calls = 0
+
+    def send(self, target: object, content: str) -> None:
+        self.calls += 1
+        raise self.error
+
+    def pending_count(self, target: object) -> int:
+        return 0
+
+
+def test_a_protocol_change_mid_run_moves_events_to_stdout(
+    receiver: Receiver, clock: Clock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sender = RefusingSender(UnsupportedProtocol("The session speaks peer protocol 2."))
+    sink = ClaudeMessageSink(
+        cast(Any, fake_session(receiver.path)),
+        REF,
+        tmp_path / "e.jsonl",
+        "next",
+        StatusOutput(),
+        clock=clock,
+        sender=cast(Any, sender),
+    )
+    sink.emit([event("pushed", 1)])
+    clock.advance(3)
+    sink.tick()
+    sink.emit([event("watch_ended", 2, reason="merged")])
+    sink.close()
+    out, err = capsys.readouterr()
+    assert [json.loads(line)["seq"] for line in out.splitlines()] == [1, 2]
+    assert "stream fallback: cannot message the session" in err
+    assert sender.calls == 1 and sink.alive()

@@ -80,9 +80,9 @@ wheels = [
 ]
 
 [[package]]
-name = "claude-code-blackbox-sdk"
-version = "0.1.0"
-source = { editable = "../claude-code-blackbox-sdk" }
+name = "cc-blackbox"
+version = "0.2.0"
+source = { editable = "../cc-blackbox" }
 dependencies = [
     { name = "pyyaml" },
 ]
@@ -112,7 +112,7 @@ name = "glab-cli-extras"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "claude-code-blackbox-sdk" },
+    { name = "cc-blackbox" },
     { name = "rich" },
     { name = "typer" },
 ]
@@ -135,7 +135,7 @@ typecheck = [
 
 [package.metadata]
 requires-dist = [
-    { name = "claude-code-blackbox-sdk", editable = "../claude-code-blackbox-sdk" },
+    { name = "cc-blackbox", editable = "../cc-blackbox" },
     { name = "rich", specifier = ">=14" },
     { name = "typer", specifier = ">=0.15" },
 ]

@@ -16,7 +16,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "claude-code-blackbox-sdk",
+  "cc-blackbox>=0.2",
   "rich>=14",
   "typer>=0.15",
 ]
@@ -36,7 +36,7 @@ package = true
 
 # Local development against a sibling checkout of the SDK, which is not published yet.
 [tool.uv.sources]
-claude-code-blackbox-sdk = { path = "../claude-code-blackbox-sdk", editable = true }
+cc-blackbox = { path = "../cc-blackbox", editable = true }
 
 [dependency-groups]
 dev = [

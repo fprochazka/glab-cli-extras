@@ -1,6 +1,6 @@
 """The `claude-message` stream: events go to the Claude Code session that started the watcher.
 
-The watcher finds its session through claude-code-blackbox-sdk and sends user messages over the session's messaging
+The watcher finds its session through the cc-blackbox SDK and sends user messages over the session's messaging
 socket. Events received close together go out as one message: the first event of a burst waits up to 3 s for the
 rest. Each message is a `<glab-cli-extras-watcher>` block, because the receiver shows the content to the model but
 never the sender label. `seq` keeps every body unique, so the receiver's duplicate check never drops a real event.
@@ -18,7 +18,7 @@ from collections.abc import Callable
 from html import escape
 from pathlib import Path
 
-from claude_code_blackbox import (
+from cc_blackbox import (
     ActiveSession,
     ClaudeBlackboxError,
     MessageTooLarge,
@@ -26,12 +26,13 @@ from claude_code_blackbox import (
     Priority,
     RateLimitedSender,
     SessionGone,
+    UnsupportedProtocol,
     current_session,
 )
 
 from glab_cli_extras.events import Event
 from glab_cli_extras.gitlab.refs import ResourceRef
-from glab_cli_extras.watch.sinks import StatusOutput
+from glab_cli_extras.watch.sinks import StatusOutput, StdoutSink
 
 BURST_WAIT = 3.0
 MAX_CONTENT_BYTES = 64 * 1024
@@ -103,6 +104,7 @@ class ClaudeMessageSink:
         self._buffer: list[Event] = []
         self._deadline: float | None = None
         self._gone = False
+        self._fallback: StdoutSink | None = None
         self._last_liveness = clock()
 
     def describe(self) -> str:
@@ -114,6 +116,9 @@ class ClaudeMessageSink:
 
     def emit(self, events: list[Event]) -> None:
         if not events:
+            return
+        if self._fallback is not None:
+            self._fallback.emit(events)
             return
         self._buffer.extend(events)
         if self._deadline is None:
@@ -134,12 +139,21 @@ class ClaudeMessageSink:
         events, self._buffer, self._deadline = self._buffer, [], None
         if not events or self._gone:
             return
+        if self._fallback is not None:
+            self._fallback.emit(events)
+            return
         content = format_message(self.ref, events, self.changelog)
         try:
             self.sender.send(self._socket, content)
         except SessionGone:
             self._gone = True
-        except (MessagingUnavailable, MessageTooLarge, ClaudeBlackboxError, OSError) as exc:
+        except (UnsupportedProtocol, MessagingUnavailable) as exc:
+            # The session stopped taking messages from us, for example after a Claude Code update changed the
+            # protocol. Keep the events flowing on stdout rather than dropping them.
+            self.status.line(f"stream fallback: cannot message the session ({exc}); events now go to stdout")
+            self._fallback = StdoutSink()
+            self._fallback.emit(events)
+        except (MessageTooLarge, ClaudeBlackboxError, OSError) as exc:
             self.status.line(f"could not message the session: {exc}; the events are in {self.changelog}")
 
     def alive(self) -> bool:
