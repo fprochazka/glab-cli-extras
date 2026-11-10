@@ -1,5 +1,5 @@
 ---
-name: comments
+name: glab:comments
 description: Fix MR comment issues (unresolved and missed comments)
 allowed-tools: ["Bash(glab-mr-status:*)", "Bash(glab-discussion:*)"]
 ---

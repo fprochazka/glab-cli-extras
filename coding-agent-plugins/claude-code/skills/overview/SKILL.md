@@ -1,5 +1,5 @@
 ---
-name: overview
+name: glab:overview
 description: Show MR overview (pipeline status, comments, external statuses)
 allowed-tools: ["Bash(glab-mr-status:*)", "Bash(glab-pipeline inspect:*)", "Bash(glab-discussion read:*)"]
 ---

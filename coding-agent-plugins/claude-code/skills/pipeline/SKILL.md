@@ -1,5 +1,5 @@
 ---
-name: pipeline
+name: glab:pipeline
 description: Fix MR pipeline issues (failed CI jobs)
 allowed-tools: ["Bash(glab-mr-status:*)", "Bash(glab-pipeline:*)"]
 ---

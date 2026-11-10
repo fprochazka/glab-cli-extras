@@ -1,5 +1,5 @@
 ---
-name: glab
+name: glab:glab
 description: >-
   This skill should be used before running the glab CLI for anything that lists, sends a body, or
   reads MR, pipeline or review state: "call the GitLab API", "glab api", "list all merge requests",
@@ -57,7 +57,7 @@ When you must write the file from the shell, quote the heredoc delimiter (`<<'EO
 
 glab-cli-extras ships commands that do these jobs in one call and write the result to files. The plugin's Bash guard denies the raw forms marked below and names the command and the skill to use.
 
-- **Pipelines, jobs and job logs**: `glab-pipeline inspect`, see the glab-pipeline skill. Denied: `glab ci view`, `glab ci get`, `glab ci trace`, and `glab api` on `…/pipelines/<id>…`, `…/jobs/<id>/trace` or `…/ci/lint`. Allowed: the pipeline list endpoint (`…/pipelines?ref=…`) and the actions `glab ci run`, `glab ci retry`, `glab ci trigger`, `glab ci cancel`.
-- **MR threads, comments, reviews and review verdicts**: `glab-discussion`, see the glab-discussion skill. It reads threads into files, writes, resolves, edits and deletes comments, and publishes a review with a verdict (`drafts publish --verdict approve`). Denied: `glab mr note`, `glab mr view --comments`, and `glab api` on an MR's `notes`, `discussions` or `draft_notes`. Allowed: award emoji through `glab api`, which glab-discussion has no command for.
-- **Waiting for a change**: `glab-watch` in the background, see the glab-watch skill. It tells the session when a pipeline finishes or someone comments. The guard does not stop a `sleep` loop, but never poll: one watcher costs a fraction of the requests.
+- **Pipelines, jobs and job logs**: `glab-pipeline inspect`, see the `glab:glab-pipeline` skill. Denied: `glab ci view`, `glab ci get`, `glab ci trace`, and `glab api` on `…/pipelines/<id>…`, `…/jobs/<id>/trace` or `…/ci/lint`. Allowed: the pipeline list endpoint (`…/pipelines?ref=…`) and the actions `glab ci run`, `glab ci retry`, `glab ci trigger`, `glab ci cancel`.
+- **MR threads, comments, reviews and review verdicts**: `glab-discussion`, see the `glab:glab-discussion` skill. It reads threads into files, writes, resolves, edits and deletes comments, and publishes a review with a verdict (`drafts publish --verdict approve`). Denied: `glab mr note`, `glab mr view --comments`, and `glab api` on an MR's `notes`, `discussions` or `draft_notes`. Allowed: award emoji through `glab api`, which glab-discussion has no command for.
+- **Waiting for a change**: `glab-watch` in the background, see the `glab:glab-watch` skill. It tells the session when a pipeline finishes or someone comments. The guard does not stop a `sleep` loop, but never poll: one watcher costs a fraction of the requests.
 - **The current state of an MR**: `glab-mr-status`, one read of the pipeline, approvals, threads and what changed since the last read. `glab-mr-status --help` explains its output.

@@ -1,5 +1,5 @@
 ---
-name: glab-watch
+name: glab:glab-watch
 description: >-
   This skill should be used when the session has to wait for something on GitLab or react to it as it
   happens: "watch this MR", "wait for the pipeline", "tell me when CI finishes", "let me know when someone
@@ -82,7 +82,7 @@ Each batch arrives as one message:
 
 `references/events.md` lists every kind with its data. The usual reactions:
 
-- **`pipeline_finished` failed** (MR) or **`finished` failed** (pipeline): read `summary.txt` from `artifacts`, or run the event's `watch_command` or `glab-pipeline inspect`. Then follow the glab-pipeline skill.
+- **`pipeline_finished` failed** (MR) or **`finished` failed** (pipeline): read `summary.txt` from `artifacts`, or run the event's `watch_command` or `glab-pipeline inspect`. Then follow the `glab:glab-pipeline` skill.
 - **`job_finished` failed**: open the log in `artifacts`.
 - **`thread_created`, `thread_updated`**: read only the thread file in `artifacts`, and note who wrote it: a human, an AI reviewer, the author, or your own signed comment.
 - **A verdict by an AI reviewer**: note the head it names.

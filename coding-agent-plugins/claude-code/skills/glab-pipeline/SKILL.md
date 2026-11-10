@@ -1,5 +1,5 @@
 ---
-name: glab-pipeline
+name: glab:glab-pipeline
 description: >-
   This skill should be used when the user asks to "inspect a pipeline", "why did the pipeline fail",
   "debug a failed CI job", "look at the job log", "check the MR pipeline", "dump the pipeline state",
@@ -54,7 +54,7 @@ Every job has a file in `job-logs/`. A job whose log was not downloaded (it pass
 
 ## Waiting for a pipeline
 
-To wait for a running pipeline, start `glab-watch pipeline <url> --until=finished` as a background task (see the glab-watch skill). Never poll `glab-pipeline inspect` in a loop.
+To wait for a running pipeline, start `glab-watch pipeline <url> --until=finished` as a background task (see the `glab:glab-watch` skill). Never poll `glab-pipeline inspect` in a loop.
 
 ## Actions stay with glab
 

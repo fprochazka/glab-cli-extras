@@ -1,5 +1,5 @@
 ---
-name: glab-discussion
+name: glab:glab-discussion
 description: >-
   This skill should be used when the user asks to "read MR discussions", "list MR comments",
   "reply to a discussion", "reply to a review comment", "resolve a discussion", "edit a comment",
