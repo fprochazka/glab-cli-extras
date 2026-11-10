@@ -228,7 +228,7 @@ glab-watch daemon stop        # running watchers start a new daemon on their nex
 glab-pipeline inspect                              # the head pipeline of the current branch's MR
 glab-pipeline inspect --pipeline-url <url>         # an explicit pipeline
 glab-pipeline inspect --pipeline-id 1234567 --project group/project --hostname gitlab.example.com
-glab-pipeline inspect --mr-url <url>               # an MR's head pipeline; also --mr-iid with --project and --hostname
+glab-pipeline inspect --mr-url <url>               # an MR's head pipeline, also from a /diffs or #note_ URL; or --mr-iid with --project and --hostname
 glab-pipeline inspect --logs=all                   # every job's log, not only the failed jobs' logs
 glab-pipeline inspect --with-merged-ci-config      # two-step lint that resolves include: against the source branch
 glab-pipeline inspect --with-test-report           # the test report even without a failed test job
@@ -262,7 +262,7 @@ On GitLab 19.0 and later, a log above 500 KB is read as its last 500 KB only, an
 
 ```bash
 glab-discussion read                     # the current branch's MR: one file per thread, then a summary of what changed
-glab-discussion read --mr-url <url>      # an explicit MR; also --mr-iid with --project and --hostname
+glab-discussion read --mr-url <url>      # an explicit MR, also from a /diffs or #note_ URL; or --mr-iid with --project and --hostname
 glab-discussion read --no-dump           # print every thread instead (the default in a terminal)
 glab-discussion read --full              # delete the thread files and write them all again
 glab-discussion write --body - < reply.md --reply-to <discussion id>     # reply to a thread
@@ -349,7 +349,7 @@ The exit code is 0 for a baseline or a read, 5 when no MR could be read, 1 for a
 
 `glab-cli-extras-cc-hook` is a PreToolUse hook for the Bash tool. It denies a command that inspects pipelines, jobs or job logs with `glab ci view|get|trace` or the raw API (`glab api projects/…/pipelines/…`, `…/jobs/…/trace`, `…/ci/lint`), or that reads or writes MR discussions with `glab api …/notes|discussions|draft_notes`, `glab mr view --comments` or `glab mr note`. The deny reason names the rule that matched, the command to use instead and the skill that teaches it. Actions stay allowed: `glab ci list`, `glab ci status`, `glab ci run`, `glab ci retry`, the pipelines list endpoint, award emoji. The rules ship in the package, in `glab_cli_extras/cc_hook/rules/`.
 
-The `glab` plugin registers it, through a wrapper that never blocks a Bash call when the command is missing or crashes. To register it without the plugin, add it to a Claude Code settings file:
+The `glab` plugin registers it, through a wrapper that never blocks a Bash call when the command is missing or crashes. Until glab-cli-extras is installed, the plugin's guard therefore allows every Bash call, and its session check says so. To register it without the plugin, add it to a Claude Code settings file:
 
 ```json
 {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "glab-cli-extras-cc-hook", "timeout": 10}]}]}}
