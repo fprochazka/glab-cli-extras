@@ -16,7 +16,7 @@ minor_of() {
 }
 
 if ! command -v glab-watch >/dev/null 2>&1; then
-  add "glab-cli-extras is not installed, so the commands the glab plugin's skills use (glab-watch, glab-mr-status, glab-pipeline, glab-discussion) and its Bash guard are missing. Tell the user and offer to run: uv tool install glab-cli-extras"
+  add "glab-cli-extras is not installed, so the commands the glab plugin's skills use (glab-watch, glab-mr-status, glab-pipeline, glab-discussion) are missing, and the plugin's Bash guard is inactive until glab-cli-extras is installed: it allows every Bash call. Tell the user and offer to run: uv tool install glab-cli-extras"
 else
   wanted=$(sed -n 's/.*"version"[^"]*"\([^"]*\)".*/\1/p' "$plugin_root/.claude-plugin/plugin.json" 2>/dev/null | head -n 1)
   installed=$(glab-watch --version 2>/dev/null | head -n 1)
@@ -33,7 +33,11 @@ else
     command -v "$command" >/dev/null 2>&1 || missing="${missing:+$missing, }$command"
   done
   if [ -n "$missing" ]; then
-    add "The installed glab-cli-extras lacks $missing, which the glab plugin uses. Tell the user and offer to run: uv tool upgrade --reinstall glab-cli-extras"
+    case "$missing" in
+      *glab-cli-extras-cc-hook*) guard=" Without glab-cli-extras-cc-hook the Bash guard is inactive: it allows every Bash call." ;;
+      *) guard="" ;;
+    esac
+    add "The installed glab-cli-extras lacks $missing, which the glab plugin uses.$guard Tell the user and offer to run: uv tool upgrade --reinstall glab-cli-extras"
   fi
   # glab-cli-extras makes both print "glab-cli-extras <version>"; the standalone packages do not.
   shadowed=""

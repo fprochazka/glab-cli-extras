@@ -104,7 +104,9 @@ def test_a_newer_patch_or_minor_is_fine(tmp_path: Path) -> None:
 
 def test_a_missing_install_is_reported(tmp_path: Path) -> None:
     tmp_path.mkdir(exist_ok=True)
-    assert "uv tool install glab-cli-extras" in context(run(CHECK, tmp_path))
+    text = context(run(CHECK, tmp_path))
+    assert "uv tool install glab-cli-extras" in text
+    assert "Bash guard is inactive until glab-cli-extras is installed" in text
 
 
 def test_an_older_minor_is_reported(tmp_path: Path) -> None:
@@ -127,3 +129,11 @@ def test_an_install_without_the_newer_commands_is_reported(tmp_path: Path) -> No
     (tmp_path / "glab-cli-extras-cc-hook").unlink()
     text = context(run(CHECK, tmp_path))
     assert "lacks glab-cli-extras-cc-hook" in text and "uv tool upgrade --reinstall glab-cli-extras" in text
+    assert "the Bash guard is inactive" in text
+
+
+def test_a_missing_command_other_than_the_hook_leaves_the_guard_unmentioned(tmp_path: Path) -> None:
+    install(tmp_path)
+    (tmp_path / "glab-mr-status").unlink()
+    text = context(run(CHECK, tmp_path))
+    assert "lacks glab-mr-status" in text and "Bash guard" not in text

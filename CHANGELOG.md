@@ -14,6 +14,7 @@ Fixed:
 
 Changed:
 
+- The glab plugin's SessionStart check says that the Bash guard is inactive, and allows every Bash call, while glab-cli-extras or its `glab-cli-extras-cc-hook` command is not installed. The plugin README says the same. A note on 0.3.0: the guard that release added has always allowed every call without glab-cli-extras, on purpose, so a missing install never blocks the session's work. The guards of the old `glab-pipeline` and `glab-discussion` plugins fell back to text patterns in that case; this one has no fallback.
 - The daemon's protocol version is 4, so a running 0.4 daemon, which knows none of the new event kinds, is left to stop on its own and a new one starts next to it. Its socket and lock are `daemon-v4.*`.
 
 ## 0.4.2 (2026-11-10)
