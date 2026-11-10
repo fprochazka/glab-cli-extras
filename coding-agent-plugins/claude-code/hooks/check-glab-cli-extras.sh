@@ -1,6 +1,6 @@
 #!/bin/sh
-# SessionStart check: is glab-cli-extras installed, recent enough for this plugin, and the owner of glab-pipeline and
-# glab-discussion? Prints nothing when all is well, and otherwise context that asks the agent to tell the user and
+# SessionStart check: is glab-cli-extras installed, recent enough for this plugin, and the owner of glab-pipeline,
+# glab-discussion and glab-search-code? Prints nothing when all is well, and otherwise context that asks the agent to tell the user and
 # offer the command that fixes it. Always exits 0.
 
 plugin_root=${CLAUDE_PLUGIN_ROOT:-$(dirname "$0")/..}
@@ -16,7 +16,7 @@ minor_of() {
 }
 
 if ! command -v glab-watch >/dev/null 2>&1; then
-  add "glab-cli-extras is not installed, so the commands the glab plugin's skills use (glab-watch, glab-mr-status, glab-pipeline, glab-discussion) are missing, and the plugin's Bash guard is inactive until glab-cli-extras is installed: it allows every Bash call. Tell the user and offer to run: uv tool install glab-cli-extras"
+  add "glab-cli-extras is not installed, so the commands the glab plugin's skills use (glab-watch, glab-mr-status, glab-pipeline, glab-discussion, glab-search-code) are missing, and the plugin's Bash guard is inactive until glab-cli-extras is installed: it allows every Bash call. Tell the user and offer to run: uv tool install glab-cli-extras"
 else
   wanted=$(sed -n 's/.*"version"[^"]*"\([^"]*\)".*/\1/p' "$plugin_root/.claude-plugin/plugin.json" 2>/dev/null | head -n 1)
   installed=$(glab-watch --version 2>/dev/null | head -n 1)
@@ -29,7 +29,7 @@ else
   # A version number can agree while the install predates a command, for example an editable install whose entry
   # points were created by an older release.
   missing=""
-  for command in glab-mr-status glab-cli-extras-cc-hook; do
+  for command in glab-mr-status glab-search-code glab-cli-extras-cc-hook; do
     command -v "$command" >/dev/null 2>&1 || missing="${missing:+$missing, }$command"
   done
   if [ -n "$missing" ]; then
@@ -39,9 +39,10 @@ else
     esac
     add "The installed glab-cli-extras lacks $missing, which the glab plugin uses.$guard Tell the user and offer to run: uv tool upgrade --reinstall glab-cli-extras"
   fi
-  # glab-cli-extras makes both print "glab-cli-extras <version>"; the standalone packages do not.
+  # glab-cli-extras makes these print "glab-cli-extras <version>"; the standalone packages do not, and the standalone
+  # glab-search-code has no --version at all.
   shadowed=""
-  for command in glab-pipeline glab-discussion; do
+  for command in glab-pipeline glab-discussion glab-search-code; do
     if command -v "$command" >/dev/null 2>&1; then
       case "$("$command" --version 2>/dev/null | head -n 1)" in
         "glab-cli-extras "*) ;;

@@ -14,6 +14,7 @@ Added:
   - The query and the ref are URL-encoded, so `&`, `#`, `+` and spaces in them work. A search that reaches 10,000 hits says it stopped.
   - `--workers` outside 1 to 50 is a usage error, exit 2. `--version` prints `glab-cli-extras <version>`.
 - The `glab:glab-search-code` skill teaches `glab-search-code`: the scope flags, the Advanced or Exact code search a group or instance search needs, taking the paths from the last two lines, and reading `hits.json` and `metadata.json` with `jq` before `rg` over the files. The `glab:glab` skill sends a code search across projects to it.
+- The glab plugin's SessionStart check reports a glab-cli-extras install that lacks `glab-search-code`, and a `glab-search-code` on `PATH` that is still the standalone tool, with the command that fixes it: `uv tool uninstall glab-search-code && uv tool install --force glab-cli-extras`.
 
 ## 0.5.1 (2026-11-10)
 

@@ -74,6 +74,7 @@ def install(
     watch: str | None = __version__,
     pipeline: str = "glab-cli-extras",
     discussion: str = "glab-cli-extras",
+    search: str | None = "glab-cli-extras",
 ) -> None:
     if watch is not None:
         fake(bin_dir, "glab-watch", f"echo 'glab-watch {watch}'")
@@ -81,6 +82,8 @@ def install(
         fake(bin_dir, "glab-cli-extras-cc-hook", "exit 0")
     fake(bin_dir, "glab-pipeline", f"echo '{pipeline} {__version__}'")
     fake(bin_dir, "glab-discussion", f"echo '{discussion} {__version__}'")
+    if search is not None:
+        fake(bin_dir, "glab-search-code", f"echo '{search} {__version__}'")
 
 
 def context(result: subprocess.CompletedProcess[str]) -> str:
@@ -122,6 +125,22 @@ def test_a_deprecated_standalone_command_is_reported(tmp_path: Path) -> None:
     text = context(run(CHECK, tmp_path))
     assert "The glab-discussion on PATH is the deprecated standalone package" in text
     assert "uv tool uninstall glab-discussion && uv tool install --force glab-cli-extras" in text
+
+
+def test_the_standalone_glab_search_code_is_reported(tmp_path: Path) -> None:
+    """The standalone tool has no --version: argparse prints a usage error to stderr and nothing to stdout."""
+    install(tmp_path)
+    fake(tmp_path, "glab-search-code", "echo 'usage: glab-search-code' >&2; exit 2")
+    text = context(run(CHECK, tmp_path))
+    assert "The glab-search-code on PATH is the deprecated standalone package" in text
+    assert "uv tool uninstall glab-search-code && uv tool install --force glab-cli-extras" in text
+
+
+def test_an_install_without_glab_search_code_is_reported(tmp_path: Path) -> None:
+    install(tmp_path, search=None)
+    text = context(run(CHECK, tmp_path))
+    assert "lacks glab-search-code" in text and "uv tool upgrade --reinstall glab-cli-extras" in text
+    assert "Bash guard" not in text
 
 
 def test_an_install_without_the_newer_commands_is_reported(tmp_path: Path) -> None:
