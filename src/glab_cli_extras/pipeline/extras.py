@@ -7,13 +7,14 @@ straight to disk through `sync_api` and are fetched by inspect only.
 
 from __future__ import annotations
 
+import re
 import sys
 import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from glab_cli_extras.gitlab.client import GitLabClient, encode_project
+from glab_cli_extras.gitlab.client import ApiError, GitLabClient, encode_project
 from glab_cli_extras.gitlab.sync_api import GlabApiError, glab_api_download
 from glab_cli_extras.pipeline.models import Bridge, Job
 from glab_cli_extras.store.layout import filename_part
@@ -29,13 +30,35 @@ async def fetch_lint_cheap(client: GitLabClient, project: str, sha: str, ref: st
     return await client.get_json(f"projects/{encode_project(project)}/ci/lint", query, kind="lint")
 
 
+MR_REF = re.compile(r"^refs/merge-requests/(\d+)/(?:head|merge|train)$")
+
+
+async def source_branch(client: GitLabClient, project: str, ref: str | None) -> str | None:
+    """The branch a pipeline ran for: its own ref when that is a branch, the MR's source branch for a merge request
+    pipeline (one request), and None for anything else or when the MR cannot be read."""
+    if not ref:
+        return None
+    if not ref.startswith("refs/"):
+        return ref
+    match = MR_REF.match(ref)
+    if match is None:
+        return None
+    try:
+        mr = await client.get_json(f"projects/{encode_project(project)}/merge_requests/{match.group(1)}", kind="mr")
+    except ApiError:
+        return None
+    branch = mr.get("source_branch") if isinstance(mr, dict) else None
+    return str(branch) if branch else None
+
+
 async def fetch_lint_two_step(client: GitLabClient, project: str, sha: str, ref: str | None, branch: str | None) -> Any:
     """Two-step lint: fetch the raw CI file from the source branch and POST it to `ci/lint` with that ref.
 
-    This resolves `include:` against the source branch, so masked CI variables in include paths work. Falls back to
-    the cheap GET on any failure. The POST is a read on GitLab's side, but like every POST it is not retried.
+    This resolves `include:` against the source branch, so masked CI variables in include paths work. Without a
+    `branch` from the caller, the branch comes from the pipeline's own ref. Falls back to the cheap GET on any
+    failure. The POST is a read on GitLab's side, but like every POST it is not retried.
     """
-    target = branch or (ref if ref and not ref.startswith("refs/") else None)
+    target = branch or await source_branch(client, project, ref)
     if not target:
         print(
             "warning: --with-merged-ci-config: no source branch resolvable, falling back to cheap GET /ci/lint",

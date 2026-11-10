@@ -153,8 +153,9 @@ def _command(args: argparse.Namespace, ref: ResourceRef) -> str:
 
 
 async def _resolve(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[ResourceRef, str | None]:
-    """The pipeline the flags name, and its source branch when that is known. Precedence as in glab-pipeline:
-    --pipeline-url, --pipeline-id, --mr-url/--mr-iid, then the current branch's MR."""
+    """The pipeline the flags name, and its source branch when the flags name an MR. Precedence as in glab-pipeline:
+    --pipeline-url, --pipeline-id, --mr-url/--mr-iid, then the current branch's MR. A pipeline named by its id gets
+    its branch from its own ref, in the lint, since it need not be the current MR's."""
     if args.pipeline_url:
         host, project, pipeline_id = parse_pipeline_url(args.pipeline_url)
         return ResourceRef("pipeline", host, project, pipeline_id), None
@@ -164,7 +165,7 @@ async def _resolve(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         if args.project:
             parser.error("--pipeline-id with --project needs --hostname too, or pass --pipeline-url")
         mr = current_branch_mr()
-        return ResourceRef("pipeline", mr.host, mr.project, args.pipeline_id), mr.source_branch
+        return ResourceRef("pipeline", mr.host, mr.project, args.pipeline_id), None
     if args.mr_url or args.mr_iid:
         if args.mr_url:
             host, project, iid = parse_mr_url(args.mr_url)

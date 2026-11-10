@@ -6,6 +6,10 @@ Added:
 
 - `glab-watch mr` reports `target_branch_changed`, `assignees_changed`, `labels_changed` and `blocking_threads_resolved_changed` in the `status` group, and `external_status_changed` in the `pipeline` group: a commit status on the head that no job of the head pipeline set, the one `glab-mr-status` prints as `failed external status:`. The first four come with the MR's snapshot query at no extra cost. The external statuses cost one request per 100 statuses of the head commit, made when the head, the head pipeline or an unfinished external status moved, and otherwise about every five minutes. A watch filtered to other groups fetches none. The `watch_started` summary adds `assignees`, `labels`, `blocking_threads_resolved` and `external_statuses`.
 
+Fixed:
+
+- `glab-pipeline inspect --with-merged-ci-config` runs the two-step lint, the one that resolves `include:` against the source branch, also when the pipeline is given by `--pipeline-url` or `--pipeline-id`. The branch comes from the pipeline's own ref, and for a merge request pipeline from its MR's source branch, at one extra request. Before, such a pipeline fell back to the cheap lint with a warning, and `--pipeline-id` alone linted the current branch's MR even for another branch's pipeline.
+
 Changed:
 
 - The daemon's protocol version is 4, so a running 0.4 daemon, which knows none of the new event kinds, is left to stop on its own and a new one starts next to it. Its socket and lock are `daemon-v4.*`.

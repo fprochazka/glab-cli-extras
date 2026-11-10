@@ -15,6 +15,7 @@ from glab_cli_extras.cli.pipeline import main as pipeline_main
 from glab_cli_extras.gitlab import sync_api
 from glab_cli_extras.gitlab.client import GitLabClient
 from glab_cli_extras.gitlab.refs import ResourceRef
+from glab_cli_extras.pipeline import extras
 from glab_cli_extras.pipeline.inspect import InspectOptions, run_inspect
 from glab_cli_extras.store.job_logs import PLACEHOLDER_MARKER
 from shapes import HOST, PROJECT, gql_job, gql_pipeline
@@ -170,3 +171,43 @@ def test_partial_context_flags_are_a_usage_error(capsys: pytest.CaptureFixture[s
 def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert pipeline_main([]) == 0
     assert "inspect" in capsys.readouterr().out
+
+
+def _lint(ref: str, routes: list[Route], clock: Clock) -> tuple[FakeGlab, Any]:
+    lint_routes = FakeGlab(
+        [
+            *routes,
+            Route(f"projects/{PROJECT.replace('/', '%2F')}/repository/files", "stages: [test]\n"),
+            Route("ci/lint", {"valid": True, "merged_yaml": "two-step"}, contains="POST"),
+            Route("ci/lint?", {"valid": True, "merged_yaml": "cheap"}),
+            Route(f"projects/{PROJECT.replace('/', '%2F')}", {"ci_config_path": None}),
+        ]
+    )
+    client = GitLabClient(HOST, runner=lint_routes, clock=clock)
+    result = asyncio.run(extras.fetch_lint_two_step(client, PROJECT, "a" * 40, ref, None))
+    return lint_routes, result
+
+
+@pytest.mark.parametrize("suffix", ["head", "merge", "train"])
+def test_the_two_step_lint_of_an_mr_pipeline_lints_the_mrs_source_branch(suffix: str, clock: Clock) -> None:
+    mr = Route("merge_requests/12", {"iid": 12, "source_branch": "feature/login-form"})
+    fake, result = _lint(f"refs/merge-requests/12/{suffix}", [mr], clock)
+    assert result["merged_yaml"] == "two-step"
+    endpoints = fake.endpoints()
+    assert endpoints[0] == "projects/group%2Fproject/merge_requests/12"
+    assert any("raw?ref=feature%2Flogin-form" in e for e in endpoints)
+
+
+def test_the_two_step_lint_of_a_branch_pipeline_needs_no_mr(clock: Clock) -> None:
+    fake, result = _lint("feature/login-form", [], clock)
+    assert result["merged_yaml"] == "two-step"
+    assert not any("merge_requests" in e for e in fake.endpoints())
+
+
+def test_an_mr_pipeline_whose_mr_cannot_be_read_falls_back_to_the_cheap_lint(
+    clock: Clock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    gone = Route("merge_requests/12", {"message": "404 Not found"}, status=404)
+    _, result = _lint("refs/merge-requests/12/head", [gone], clock)
+    assert result["merged_yaml"] == "cheap"
+    assert "no source branch resolvable" in capsys.readouterr().err
