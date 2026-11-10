@@ -45,3 +45,16 @@ def parse_note_ref(value: str) -> NoteRef:
         f"Unrecognized ID '{value}': pass 'note:<id>' for a published note"
         " or 'draft:<id>' for your pending draft. 'read' prints IDs in this form."
     )
+
+
+def parse_published_note_ref(value: str) -> NoteRef:
+    """Parse `note:123` only, for when the `discussion.drafts` setting turns drafts off. Used as an argparse `type`."""
+    ref = _REF_RE.match(value.strip())
+    if ref and ref.group(1) == "note":
+        return NoteRef(kind="note", id=int(ref.group(2)))
+    if ref:
+        raise argparse.ArgumentTypeError(
+            f"'{value}' is a draft, and the discussion.drafts setting turns drafts off on this machine."
+            " Pass 'note:<id>' for a published note."
+        )
+    raise argparse.ArgumentTypeError(f"Unrecognized ID '{value}': pass 'note:<id>', as 'read' prints it.")

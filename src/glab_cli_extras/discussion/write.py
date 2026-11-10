@@ -5,6 +5,7 @@ import os
 import sys
 from typing import Any
 
+from glab_cli_extras.config import DRAFTS
 from glab_cli_extras.discussion.attach import add_images, check_images, upload_images
 from glab_cli_extras.discussion.checks import (
     CheckError,
@@ -14,6 +15,7 @@ from glab_cli_extras.discussion.checks import (
     full_discussion_id,
     refuse_quick_actions,
     require_body,
+    require_drafts,
     settings_of,
 )
 from glab_cli_extras.discussion.context import resolve_mr_context
@@ -49,6 +51,17 @@ def build_position(
 
 def write_as_draft(args: argparse.Namespace) -> bool:
     """Decide whether to write a draft: --draft or --no-draft win, otherwise GLAB_DISCUSSION_WRITE_AS_DRAFT decides."""
+    settings = settings_of(args)
+    if settings.drafts_disabled:
+        # The variable asks to hold every comment back as a draft; posting it at once instead is not what it meant.
+        if os.environ.get(DRAFT_ENV_VAR, "").strip().lower() in _TRUE_VALUES:
+            print(
+                f"Error: {DRAFT_ENV_VAR} asks for a draft, and {settings.describe(DRAFTS)} turns drafts off."
+                f" Unset {DRAFT_ENV_VAR} to post the comment at once. Nothing was sent.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return False
     if getattr(args, "draft", False):
         return True
     if getattr(args, "no_draft", False):
@@ -245,6 +258,7 @@ def _write_note(ctx: MrContext, body: str) -> None:
 def _write_draft(
     args: argparse.Namespace, ctx: MrContext, body: str, resolve: bool, position: dict[str, Any] | None
 ) -> None:
+    require_drafts(settings_of(args))
     payload: dict[str, Any] = {"note": body}
     if args.reply_to:
         payload["in_reply_to_discussion_id"] = args.reply_to

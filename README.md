@@ -415,16 +415,18 @@ A few settings restrict what the commands may do, for a machine that runs coding
 ```toml
 [discussion]
 quick_actions = "reject"  # "allow" (default) or "reject"
+drafts = "disabled"       # "enabled" (default) or "disabled"
 ```
 
 - `discussion.quick_actions = "reject"`: `glab-discussion write`, `edit` and `drafts publish --body` refuse a body with a line that GitLab may run as a quick action, with exit 1 and before any request. Such a line starts with `/` and a word, such as `/approve` or `/label ~bug`, also after spaces, outside a closed fenced code block (```` ``` ```` or `~~~`). This is stricter than GitLab, which runs only the commands it knows: any word counts, and an unclosed fence protects nothing. Put text such as `/approve` in backticks or a fenced code block to post it. The quick action that `drafts publish` sends itself to submit the review is not affected.
+- `discussion.drafts = "disabled"`: `glab-discussion` has no `drafts` command and no `write --draft`, `--no-draft` or `--resolve` option, and `edit` and `delete` take only `note:<id>`. They are missing from `--help`, and using one is a usage error, exit 2. Every `write` posts at once, so it never writes a draft or submits a review. `GLAB_DISCUSSION_WRITE_AS_DRAFT=true` then stops `write` with exit 1 instead of posting a comment that was meant to wait as a draft. `read` still shows the drafts you have.
 
 The settings come from these sources, and each one is read:
 
 - the system file: `/etc/glab-cli-extras/config.toml`, on Windows `%PROGRAMDATA%\glab-cli-extras\config.toml`;
 - the user file: `$XDG_CONFIG_HOME/glab-cli-extras/config.toml`, by default `~/.config/glab-cli-extras/config.toml`, also on macOS; on Windows `%APPDATA%\glab-cli-extras\config.toml`;
 - the file that `GLAB_CLI_EXTRAS_CONFIG` names, which must exist;
-- one environment variable per setting: `GLAB_CLI_EXTRAS_DISCUSSION_QUICK_ACTIONS`. An empty variable counts as unset.
+- one environment variable per setting: `GLAB_CLI_EXTRAS_DISCUSSION_QUICK_ACTIONS` and `GLAB_CLI_EXTRAS_DISCUSSION_DRAFTS`. An empty variable counts as unset.
 
 A restriction applies when any source sets it. A less restrictive value in another source does not loosen it, whatever the order: `quick_actions = "reject"` in `/etc` holds even when the user file or the environment says `"allow"`. To lift a restriction, remove it from every source that sets it. The error message of a refused command names the source.
 

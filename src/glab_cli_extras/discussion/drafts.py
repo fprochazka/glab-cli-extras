@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, NoReturn
 
-from glab_cli_extras.discussion.checks import refuse_quick_actions, require_body, settings_of
+from glab_cli_extras.discussion.checks import refuse_quick_actions, require_body, require_drafts, settings_of
 from glab_cli_extras.discussion.context import resolve_mr_context
 from glab_cli_extras.discussion.models import DraftNote, MrContext, parse_draft_note
 from glab_cli_extras.gitlab.sync_api import GlabApiError, glab_api, glab_graphql_mutation, glab_graphql_query
@@ -244,6 +244,7 @@ def _create_summary_draft(ctx: MrContext, body: str) -> None:
 
 
 def run_publish(args: argparse.Namespace) -> None:
+    require_drafts(settings_of(args))
     body = None
     if args.body is not None:
         body = sys.stdin.read() if args.body == "-" else args.body

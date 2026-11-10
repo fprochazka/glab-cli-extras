@@ -54,7 +54,8 @@ class Setting:
 
 
 QUICK_ACTIONS = Setting("discussion", "quick_actions", ("allow", "reject"))
-SETTINGS: tuple[Setting, ...] = (QUICK_ACTIONS,)
+DRAFTS = Setting("discussion", "drafts", ("enabled", "disabled"))
+SETTINGS: tuple[Setting, ...] = (QUICK_ACTIONS, DRAFTS)
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,10 @@ class Settings:
     @property
     def quick_actions_rejected(self) -> bool:
         return self.get(QUICK_ACTIONS) == "reject"
+
+    @property
+    def drafts_disabled(self) -> bool:
+        return self.get(DRAFTS) == "disabled"
 
 
 def system_config_file() -> Path:

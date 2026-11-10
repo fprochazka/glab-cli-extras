@@ -11,10 +11,10 @@ import sys
 from glab_cli_extras import __version__
 from glab_cli_extras.cli.deprecated import warn_if_installed
 from glab_cli_extras.cli.stdio import force_utf8_stdio
-from glab_cli_extras.config import ConfigError, load_settings
+from glab_cli_extras.config import ConfigError, Settings, load_settings
 from glab_cli_extras.discussion.checks import CheckError, UsageError
 from glab_cli_extras.discussion.context import ContextError
-from glab_cli_extras.discussion.ids import parse_note_ref
+from glab_cli_extras.discussion.ids import parse_note_ref, parse_published_note_ref
 from glab_cli_extras.gitlab.client import ApiError
 from glab_cli_extras.gitlab.glab import GlabNotFoundError
 from glab_cli_extras.gitlab.refs import RefError
@@ -23,9 +23,19 @@ from glab_cli_extras.store.locks import LockTimeout
 
 NOTE_REF_METAVAR = "note:ID|draft:ID"
 NOTE_REF_HELP = "as 'read' prints it: note:123 for a published note, draft:123 for your pending draft"
+PUBLISHED_REF_METAVAR = "note:ID"
+PUBLISHED_REF_HELP = "as 'read' prints it: note:123"
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
+    """The parser. When the `discussion.drafts` setting turns drafts off, it has no draft command or option at all,
+    so that `--help` does not offer them and using one is a usage error."""
+    drafts = settings is None or not settings.drafts_disabled
+    ref_type, ref_metavar, ref_help = (
+        (parse_note_ref, NOTE_REF_METAVAR, NOTE_REF_HELP)
+        if drafts
+        else (parse_published_note_ref, PUBLISHED_REF_METAVAR, PUBLISHED_REF_HELP)
+    )
     # Shared parent parser for MR context flags
     mr_parent = argparse.ArgumentParser(add_help=False)
     mr_parent.add_argument("--mr-url", help="Full URL of the merge request")
@@ -68,26 +78,27 @@ def build_parser() -> argparse.ArgumentParser:
     write_parser.add_argument("--new-line", type=int, help="New-side line number for diff note")
     write_parser.add_argument("--old-line", type=int, help="Old-side line number for diff note")
     write_parser.add_argument("--commit", metavar="SHA", help="Commit SHA for diff note")
-    draft_group = write_parser.add_mutually_exclusive_group()
-    draft_group.add_argument(
-        "--draft",
-        action="store_true",
-        default=False,
-        help="Write a pending draft that only you see until 'drafts publish'"
-        " (default: the GLAB_DISCUSSION_WRITE_AS_DRAFT environment variable)",
-    )
-    draft_group.add_argument(
-        "--no-draft",
-        action="store_true",
-        default=False,
-        help="Publish the comment immediately, even if GLAB_DISCUSSION_WRITE_AS_DRAFT is true",
-    )
-    write_parser.add_argument(
-        "--resolve",
-        action="store_true",
-        default=False,
-        help="Resolve the thread when the draft is published (only with --reply-to and a draft)",
-    )
+    if drafts:
+        draft_group = write_parser.add_mutually_exclusive_group()
+        draft_group.add_argument(
+            "--draft",
+            action="store_true",
+            default=False,
+            help="Write a pending draft that only you see until 'drafts publish'"
+            " (default: the GLAB_DISCUSSION_WRITE_AS_DRAFT environment variable)",
+        )
+        draft_group.add_argument(
+            "--no-draft",
+            action="store_true",
+            default=False,
+            help="Publish the comment immediately, even if GLAB_DISCUSSION_WRITE_AS_DRAFT is true",
+        )
+        write_parser.add_argument(
+            "--resolve",
+            action="store_true",
+            default=False,
+            help="Resolve the thread when the draft is published (only with --reply-to and a draft)",
+        )
 
     # --- diff ---
     diff_parser = subparsers.add_parser("diff", parents=[mr_parent], help="Show MR diff information")
@@ -100,47 +111,48 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_parser.add_argument("--unresolve", action="store_true", default=False, help="Unresolve instead of resolve")
 
     # --- delete ---
-    delete_parser = subparsers.add_parser("delete", parents=[mr_parent], help="Delete a note or a draft")
-    delete_parser.add_argument(
-        "note_ref", type=parse_note_ref, metavar=NOTE_REF_METAVAR, help=f"ID to delete, {NOTE_REF_HELP}"
+    delete_parser = subparsers.add_parser(
+        "delete", parents=[mr_parent], help="Delete a note or a draft" if drafts else "Delete a note"
     )
+    delete_parser.add_argument("note_ref", type=ref_type, metavar=ref_metavar, help=f"ID to delete, {ref_help}")
 
     # --- edit ---
-    edit_parser = subparsers.add_parser("edit", parents=[mr_parent], help="Edit a note or a draft")
-    edit_parser.add_argument(
-        "note_ref", type=parse_note_ref, metavar=NOTE_REF_METAVAR, help=f"ID to edit, {NOTE_REF_HELP}"
+    edit_parser = subparsers.add_parser(
+        "edit", parents=[mr_parent], help="Edit a note or a draft" if drafts else "Edit a note"
     )
+    edit_parser.add_argument("note_ref", type=ref_type, metavar=ref_metavar, help=f"ID to edit, {ref_help}")
     edit_parser.add_argument("--body", required=True, help='New note body text (use "-" for stdin)')
 
-    # --- drafts ---
-    drafts_parser = subparsers.add_parser("drafts", help="Publish or delete your pending drafts")
-    drafts_subparsers = drafts_parser.add_subparsers(dest="drafts_command", required=True)
+    if drafts:
+        # --- drafts ---
+        drafts_parser = subparsers.add_parser("drafts", help="Publish or delete your pending drafts")
+        drafts_subparsers = drafts_parser.add_subparsers(dest="drafts_command", required=True)
 
-    publish_parser = drafts_subparsers.add_parser(
-        "publish",
-        parents=[mr_parent],
-        help="Publish all your drafts as one review",
-        description="Publish all your drafts on the MR as one review, with one notification.",
-    )
-    publish_parser.add_argument(
-        "--body", help='Summary comment, added as a draft and published with the review (use "-" for stdin)'
-    )
-    publish_parser.add_argument(
-        "--verdict",
-        choices=["reviewed", "requested-changes", "approve"],
-        help="The verdict of the review. Adds you as a reviewer if you are not one. Needs GitLab 16.7 or newer."
-        " Default: reviewed, if you have not given the MR a verdict yet; otherwise --verdict is required.",
-    )
+        publish_parser = drafts_subparsers.add_parser(
+            "publish",
+            parents=[mr_parent],
+            help="Publish all your drafts as one review",
+            description="Publish all your drafts on the MR as one review, with one notification.",
+        )
+        publish_parser.add_argument(
+            "--body", help='Summary comment, added as a draft and published with the review (use "-" for stdin)'
+        )
+        publish_parser.add_argument(
+            "--verdict",
+            choices=["reviewed", "requested-changes", "approve"],
+            help="The verdict of the review. Adds you as a reviewer if you are not one. Needs GitLab 16.7 or newer."
+            " Default: reviewed, if you have not given the MR a verdict yet; otherwise --verdict is required.",
+        )
 
-    drafts_delete_parser = drafts_subparsers.add_parser(
-        "delete",
-        parents=[mr_parent],
-        help="Delete all your drafts",
-        description="List all your drafts on the MR. With --force, delete them.",
-    )
-    drafts_delete_parser.add_argument(
-        "--force", action="store_true", default=False, help="Delete the drafts instead of listing them"
-    )
+        drafts_delete_parser = drafts_subparsers.add_parser(
+            "delete",
+            parents=[mr_parent],
+            help="Delete all your drafts",
+            description="List all your drafts on the MR. With --force, delete them.",
+        )
+        drafts_delete_parser.add_argument(
+            "--force", action="store_true", default=False, help="Delete the drafts instead of listing them"
+        )
     return parser
 
 
@@ -190,7 +202,7 @@ def main(argv: list[str] | None = None) -> None:
     except ConfigError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
-    parser = build_parser()
+    parser = build_parser(settings)
     args = parser.parse_args(argv)
     args.settings = settings
     try:

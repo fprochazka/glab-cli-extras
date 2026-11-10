@@ -86,6 +86,9 @@ glab-discussion write --reply-to <discussion id> --body - < reply.md --attach be
 The owner of the machine can restrict `glab-discussion` in a config file or an environment variable, which you cannot change and must not try to work around.
 
 - **`the body has lines that GitLab runs as quick actions`**: quick actions are turned off. A line that starts with `/word`, such as `/approve`, would run as a GitLab command. Rewrite the text so that no line starts with `/`, or put such text in backticks or a fenced code block. Never retry the same body.
+- **No `drafts` command, no `--draft` option**: drafts are turned off. `glab-discussion --help` then lists no `drafts` command, `write --help` no `--draft`, `--no-draft` or `--resolve`, and `edit` and `delete` take only `note:<id>`. Every `write` posts at once. For a review with many comments, post each comment directly and tell the user that drafts are not available. `GLAB_DISCUSSION_WRITE_AS_DRAFT=true` then makes `write` fail; tell the user instead of unsetting it.
+
+When a command or option from this skill is missing from `--help`, check this section before you assume an old version: the restriction removes it on purpose.
 
 ### Signing a posted comment
 

@@ -114,3 +114,14 @@ def test_an_explicit_file_must_exist(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("GLAB_CLI_EXTRAS_CONFIG", str(tmp_path / "missing.toml"))
     with pytest.raises(ConfigError, match="GLAB_CLI_EXTRAS_CONFIG names .*missing.toml, which is not a file"):
         load_settings()
+
+
+def test_the_drafts_setting_combines_like_every_other(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from glab_cli_extras.config import DRAFTS
+
+    _user(tmp_path).write_text('[discussion]\ndrafts = "enabled"\nquick_actions = "allow"\n')
+    assert not load_settings().drafts_disabled
+    monkeypatch.setenv("GLAB_CLI_EXTRAS_DISCUSSION_DRAFTS", "disabled")
+    settings = load_settings()
+    assert settings.drafts_disabled and not settings.quick_actions_rejected
+    assert settings.source(DRAFTS) == "GLAB_CLI_EXTRAS_DISCUSSION_DRAFTS"

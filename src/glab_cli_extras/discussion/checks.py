@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from glab_cli_extras.config import QUICK_ACTIONS, Settings, load_settings
+from glab_cli_extras.config import DRAFTS, QUICK_ACTIONS, Settings, load_settings
 from glab_cli_extras.discussion.diff import HUNK_RE
 from glab_cli_extras.discussion.models import MrContext
 from glab_cli_extras.gitlab.sync_api import GlabApiError, glab_api
@@ -80,6 +80,13 @@ def settings_of(args: argparse.Namespace) -> Settings:
     """The settings `main` loaded for this command, or the current ones for a caller that loaded none."""
     settings = getattr(args, "settings", None)
     return settings if isinstance(settings, Settings) else load_settings()
+
+
+def require_drafts(settings: Settings) -> None:
+    """Refuse to write a draft or submit a review when the `discussion.drafts` setting turns drafts off. The parser
+    has no draft options then; this guards every other way in."""
+    if settings.drafts_disabled:
+        raise CheckError(f"drafts are turned off by {settings.describe(DRAFTS)}; nothing was sent")
 
 
 def refuse_quick_actions(body: str, settings: Settings) -> None:
