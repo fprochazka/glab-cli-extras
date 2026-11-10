@@ -118,3 +118,41 @@ def test_submit_review_is_a_command_only_note_and_its_202_is_read(
     ]
     out = capsys.readouterr().out
     assert "GitLab: Submitted the current review." in out and "Set your reviewer state to reviewed." in out
+
+
+TAKEN = {"message": {"author_id": ["has already been taken"]}}
+"""GitLab's 400 for a second draft reply of one user in one thread."""
+
+
+def test_a_second_draft_reply_in_a_thread_names_the_draft_to_edit_or_delete(
+    fake: FakeGlab, capsys: pytest.CaptureFixture[str]
+) -> None:
+    drafts = [
+        {"id": 77, "note": "Other.", "discussion_id": None},
+        {"id": 78, "note": "1st", "discussion_id": DISCUSSION},
+    ]
+    fake.routes = [
+        Route(f"{MR_PATH}/draft_notes", TAKEN, status=400, contains="-X POST"),
+        Route(f"{MR_PATH}/draft_notes", drafts),
+    ]
+    with pytest.raises(SystemExit) as exit_info:
+        run("write", "--draft", "--reply-to", DISCUSSION, "--body", "Second.")
+    assert exit_info.value.code == 1
+    err = capsys.readouterr().err
+    assert f"you already have a draft reply (draft:78) in discussion {DISCUSSION}" in err
+    assert "'glab-discussion edit draft:78 --body - < file'" in err and "'glab-discussion delete draft:78'" in err
+    assert len(writes(fake)) == 1
+
+
+def test_a_second_draft_reply_still_explains_itself_when_the_drafts_cannot_be_listed(
+    fake: FakeGlab, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.routes = [
+        Route(f"{MR_PATH}/draft_notes", TAKEN, status=400, contains="-X POST"),
+        Route(f"{MR_PATH}/draft_notes", {"message": "403 Forbidden"}, status=403),
+    ]
+    with pytest.raises(SystemExit) as exit_info:
+        run("write", "--draft", "--reply-to", DISCUSSION, "--body", "Second.")
+    assert exit_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "you already have a draft reply in discussion" in err and "Find it with 'glab-discussion read'" in err

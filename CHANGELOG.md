@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Changed:
+
+- `glab-discussion write --draft --reply-to` explains GitLab's refusal of a second draft reply in a thread where you already have one: GitLab keeps one draft reply per user and thread, and answers `400` with `author_id has already been taken`, which the command printed as it came. The error names the existing draft, and says to edit it or to delete it and write the reply again.
+
 ## 0.6.0 (2026-11-10)
 
 Added:

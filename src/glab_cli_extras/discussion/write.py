@@ -13,7 +13,7 @@ from glab_cli_extras.discussion.checks import (
     require_body,
 )
 from glab_cli_extras.discussion.context import resolve_mr_context
-from glab_cli_extras.discussion.models import MrContext, is_inline_draft_position
+from glab_cli_extras.discussion.models import MrContext, is_inline_draft_position, parse_draft_note
 from glab_cli_extras.gitlab.sync_api import GlabApiError, glab_api
 
 DRAFT_ENV_VAR = "GLAB_DISCUSSION_WRITE_AS_DRAFT"
@@ -212,6 +212,8 @@ def _write_draft(args: argparse.Namespace, ctx: MrContext, body: str, resolve: b
     except GlabApiError as exc:
         if exc.http_status == 404 and args.reply_to:
             raise explain_404(ctx, args.reply_to, "draft reply") from exc
+        if args.reply_to and exc.http_status == 400 and "has already been taken" in str(exc):
+            raise _second_draft_reply(ctx, args.reply_to) from exc
         raise
     if args.file and not is_inline_draft_position(result.get("position") or {}):
         raise CheckError(
@@ -223,3 +225,32 @@ def _write_draft(args: argparse.Namespace, ctx: MrContext, body: str, resolve: b
     if not getattr(args, "draft", False):
         # The environment made this a draft, which the caller may not expect.
         print(f"Written as a draft because {DRAFT_ENV_VAR} is set. Pass --no-draft to post it right away.")
+
+
+def _second_draft_reply(ctx: MrContext, discussion_id: str) -> CheckError:
+    """The error for a second draft reply in one thread, which GitLab refuses with `400 author_id has already been
+    taken`: it keeps one draft reply per user and thread. Names the existing draft when the drafts can be listed."""
+    existing = None
+    try:
+        drafts = glab_api(
+            f"projects/{ctx.project_id}/merge_requests/{ctx.mr_iid}/draft_notes", paginate=True, hostname=ctx.hostname
+        )
+        existing = next(
+            (d.id for d in map(parse_draft_note, drafts or []) if d.discussion_id == discussion_id),
+            None,
+        )
+    except (GlabApiError, KeyError, TypeError):
+        pass
+    if existing is None:
+        what = "a draft reply"
+        fix = "Find it with 'glab-discussion read', then edit it with 'glab-discussion edit draft:<id>' or delete it"
+    else:
+        what = f"a draft reply (draft:{existing})"
+        fix = (
+            f"Put this text into it with 'glab-discussion edit draft:{existing} --body - < file',"
+            f" or delete it with 'glab-discussion delete draft:{existing}' and write the reply again"
+        )
+    return CheckError(
+        f"you already have {what} in discussion {discussion_id}, and GitLab allows one draft reply per thread"
+        f" for each user. The new reply was not saved. {fix}"
+    )
