@@ -418,6 +418,7 @@ Claude Code starts the hook on every Bash call. A command that does not contain 
 - **Deeper downstream pipelines** (a child of a child) are not watched. Their changes do reach the watched pipeline's ETag, but their jobs are not reported.
 - **Code search across a group or an instance needs Advanced search or Exact code search.** Without it, only `glab-search-code --project` works.
 - **A code search stops after 10,000 hits** (100 pages). The summary says so; narrow the query, or search a group or a project.
+- **A code search can miss a few hits.** GitLab pages its search results by offset, and the order of the hits can shift between two page requests. Then two pages overlap: a few hits come twice and as many are never returned. The command downloads each file once, so a repeated hit costs nothing, but the missed ones are gone. In one test, 3 of 356 hits were missed this way. Searching a project or a group returns fewer pages, so fewer page boundaries.
 - **SSH host aliases** in git remotes are resolved by glab, as glab resolves them. A remote glab cannot map to a configured host fails at start.
 
 ## Development
