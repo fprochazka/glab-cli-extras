@@ -56,6 +56,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Post a plain comment, which cannot be resolved, instead of a new thread. Posted at once, never a draft",
     )
+    write_parser.add_argument(
+        "--attach",
+        action="append",
+        metavar="IMAGE",
+        help="Upload a PNG, JPEG, GIF or WebP image to the project and show it after the body text."
+        " Repeat for more images",
+    )
     write_parser.add_argument("--file", help="File path for a diff note")
     write_parser.add_argument("--new-line", type=int, help="New-side line number for diff note")
     write_parser.add_argument("--old-line", type=int, help="Old-side line number for diff note")

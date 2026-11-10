@@ -132,6 +132,17 @@ def glab_api(
         page = int(next_page)
 
 
+def glab_api_upload(endpoint: str, file: str, *, hostname: str, field: str = "file") -> Any:
+    """POST one file as `multipart/form-data` (`glab api --form <field>=@<file>`) and return the parsed answer.
+
+    The one exception to the JSON-on-stdin rule: an upload endpoint reads the file only from a form part. Never retried,
+    like every write.
+    """
+    args = build_api_args(hostname, endpoint, method="POST")
+    args[-1:-1] = ["--form", f"{field}=@{file}"]
+    return _parse(_with_retries(args, None, retry=False), endpoint)
+
+
 def _graphql(query: str, variables: Mapping[str, Any], hostname: str, retry: bool) -> dict[str, Any]:
     args = build_api_args(hostname, "graphql", method="POST", json_body=True)
     response = _with_retries(args, json_bytes({"query": query, "variables": dict(variables)}), retry)

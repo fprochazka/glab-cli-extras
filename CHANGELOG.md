@@ -5,6 +5,7 @@
 Added:
 
 - `glab-discussion write --note` posts a plain comment through the MR notes endpoint instead of starting a resolvable thread. It is never a draft, also under `GLAB_DISCUSSION_WRITE_AS_DRAFT=true`. With `--reply-to`, `--file`, `--new-line`, `--old-line`, `--commit`, `--draft` or `--resolve` it is a usage error, exit 2.
+- `glab-discussion write --attach <image>`, repeatable, uploads a PNG, JPEG, GIF or WebP image to the MR's project (`POST /projects/:id/uploads`) and shows it in the comment: after the body text and a blank line, one image per line, in the order given, and before a signature line such as `<!-- plugin:command -->` when the body ends with one. It works for threads, replies, diff notes, `--note` and drafts. A file that is missing, or that is not one of these images by both its extension and its first bytes, stops the command before any request. The upload needs a glab whose `api` command has `--form`.
 
 Changed:
 

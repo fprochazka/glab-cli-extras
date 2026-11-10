@@ -5,6 +5,7 @@ import os
 import sys
 from typing import Any
 
+from glab_cli_extras.discussion.attach import add_images, check_images, upload_images
 from glab_cli_extras.discussion.checks import (
     CheckError,
     UsageError,
@@ -148,22 +149,28 @@ def run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    # 2. Read the body
+    # 2. Read the body, and check the images before any request
     body = sys.stdin.read() if args.body == "-" else args.body
     require_body(body)
+    images = check_images(getattr(args, "attach", None) or [])
 
-    # 3. Resolve MR context, and the full id of the discussion a reply goes to
+    # 3. Resolve MR context, the full id of the discussion a reply goes to, and the position of a diff note
     ctx = resolve_mr_context(args)
     if args.reply_to:
         args.reply_to = full_discussion_id(ctx, args.reply_to)
+    position = _diff_position(ctx, args) if args.file else None
 
-    # 4. Determine mode and execute
+    # 4. Upload the images: last, so that a refused option or line leaves no upload behind
+    if images:
+        body = add_images(body, upload_images(ctx, images))
+
+    # 5. Determine mode and execute
     if plain_note:
         _write_note(ctx, body)
         return
 
     if draft:
-        _write_draft(args, ctx, body, resolve)
+        _write_draft(args, ctx, body, resolve, position)
         return
 
     if args.reply_to:
@@ -181,10 +188,7 @@ def run(args: argparse.Namespace) -> None:
             raise
         print(f"Replied to discussion {args.reply_to} (note:{result['id']}) - {ctx.mr_url}#note_{result['id']}")
 
-    elif args.file:
-        # Diff note mode - fetch versions to get SHAs
-        position = _diff_position(ctx, args)
-
+    elif position is not None:
         result = glab_api(
             f"projects/{ctx.project_id}/merge_requests/{ctx.mr_iid}/discussions",
             method="POST",
@@ -235,15 +239,17 @@ def _write_note(ctx: MrContext, body: str) -> None:
     print(f"Created note:{note_id} - {ctx.mr_url}#note_{note_id}")
 
 
-def _write_draft(args: argparse.Namespace, ctx: MrContext, body: str, resolve: bool) -> None:
+def _write_draft(
+    args: argparse.Namespace, ctx: MrContext, body: str, resolve: bool, position: dict[str, Any] | None
+) -> None:
     payload: dict[str, Any] = {"note": body}
     if args.reply_to:
         payload["in_reply_to_discussion_id"] = args.reply_to
         if resolve:
             payload["resolve_discussion"] = True
         target = f"reply to discussion {args.reply_to}" + (", resolves the thread" if resolve else "")
-    elif args.file:
-        payload["position"] = _diff_position(ctx, args)
+    elif position is not None:
+        payload["position"] = position
         line = args.new_line if args.new_line is not None else args.old_line
         target = f"diff note on {args.file}:{line}"
     else:
