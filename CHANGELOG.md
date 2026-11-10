@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 (2026-11-10)
+
+Fixed:
+
+- The `glab:glab-watch` skill now explains why agents leave `--events-stream` at its default: with `auto`, events arrive in the session as messages; with `stdout`, the agent would have to read the task output or `events.jsonl` itself to notice a change. The old wording claimed nobody reads stdout events.
+
 ## 0.3.0 (2026-11-09)
 
 Breaking changes:
