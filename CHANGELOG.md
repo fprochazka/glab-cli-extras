@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2 (2026-11-10)
+
+Changed:
+
+- Every skill and command of the `glab` plugin is named `glab:<name>` in its front matter. Claude Code made a bare name such as `name: glab-watch` an alias, so `/glab-watch` and a `Skill` call with `glab-watch` worked, and the slash menu showed `/glab:glab-watch (glab-watch)`. The bare names no longer work: use `/glab:glab-watch`, `/glab:overview`, `glab:glab-pipeline` and the other `glab:` names, also in `Skill(…)` permission rules. The skills and the plugin README refer to each other by those names.
+- The `glab:glab-watch` skill says how watchers and subagents work together: the main session starts and owns the watchers, and forwards the events that concern a subagent's delegated work to it with SendMessage, as the event lines and the file paths they name. A subagent starts no watcher of its own, because its messages would reach the main session anyway.
+
 ## 0.4.1 (2026-11-10)
 
 Changed:

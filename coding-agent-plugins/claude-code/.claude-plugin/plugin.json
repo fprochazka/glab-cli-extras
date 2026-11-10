@@ -1,6 +1,6 @@
 {
   "name": "glab",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "GitLab through the glab CLI and glab-cli-extras: watch MRs and pipelines, read MR status, inspect pipelines, read and write discussions",
   "author": {
     "name": "Filip Procházka",
