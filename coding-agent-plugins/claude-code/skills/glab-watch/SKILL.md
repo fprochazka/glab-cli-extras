@@ -39,7 +39,7 @@ glab-watch branch group/project main
   glab-watch mr <url> --quiet-after=2m --quiet-after=15m --stuck-after=30m --idle-after=3h
   ```
 
-- **Start watchers from the main session.** A watcher started from a subagent messages the main session anyway; Claude Code has no route to a subagent.
+- **Start watchers from the main session.** The main session, the orchestrator, starts and owns the watchers. A subagent does not start its own: its watcher's messages would land in the main session anyway, since Claude Code has no route to a subagent. When the main session has delegated work on the watched resource to a subagent, for example fixing the pipeline or answering threads, it forwards the events that concern that work to the subagent with SendMessage. It passes the event lines and the file paths from the event (thread file, job log), not its own summary, and it keeps back the events the subagent does not need.
 
 ### Leave `--events-stream` at its default
 
