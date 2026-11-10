@@ -23,7 +23,9 @@ from typing import Any
 
 from glab_cli_extras.paths import STATE_DIR_ENV, daemon_state_dir, ensure_private_dir
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
+"""Bumped when a daemon of the previous version could not serve this client: an unknown event kind, a new snapshot
+field."""
 MAX_LINE = 64 * 1024 * 1024
 """Enough for a job log of several MB, base64-encoded, in one response line."""
 TRANSPORT_ENV = "GLAB_CLI_EXTRAS_TRANSPORT"

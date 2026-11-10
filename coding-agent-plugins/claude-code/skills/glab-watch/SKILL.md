@@ -84,12 +84,14 @@ Each batch arrives as one message:
 
 - **`pipeline_finished` failed** (MR) or **`finished` failed** (pipeline): read `summary.txt` from `artifacts`, or run the event's `watch_command` or `glab-pipeline inspect`. Then follow the `glab:glab-pipeline` skill.
 - **`job_finished` failed**: open the log in `artifacts`.
+- **`external_status_changed` to `failed`**: a check outside the CI failed on the head. `glab-pipeline` does not see it; its `target_url` and `description` say what failed.
+- **`target_branch_changed`**: the MR was re-targeted. A watch on the old target branch now watches the wrong branch.
 - **`thread_created`, `thread_updated`**: read only the thread file in `artifacts`, and note who wrote it: a human, an AI reviewer, the author, or your own signed comment.
 - **A verdict by an AI reviewer**: note the head it names.
 - **`pushed`**: compare `to` with the SHA you pushed before you treat it as someone else's push. Verdicts and green pipelines on the old head are stale from now on.
 - **`thread_unresolved` with `after_push: true`**: GitLab can show a thread unresolved for a moment after a force-push. Read the thread again before acting on it.
 - **`approvals_changed`**: name who approved and whether it is a human or an AI approver.
-- **`draft_changed`, `reviewers_changed`**: if the caller defined a handover rule, evaluate it now.
+- **`draft_changed`, `reviewers_changed`, `assignees_changed`**: if the caller defined a handover rule, evaluate it now.
 - **`quiet`, `pipeline_stuck`**: act as the caller's purpose says; they report that nothing happened.
 - **`watch_degraded`**: `auth`, tell the user to run `glab auth status`; `rate_limited`, nothing to do; `not_found`, check the ref; `daemon_mismatch`, run `glab-watch daemon stop`, and the watchers continue on a new daemon.
 - **`watch_ended`**: the reason says why: `merged`, `closed`, `finished`, `until`, `timeout`, `idle`, `not_found`, `session_gone`, or a signal.

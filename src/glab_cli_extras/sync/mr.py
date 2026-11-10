@@ -1,4 +1,5 @@
-"""Merge requests: the snapshot model, the GraphQL snapshot fetch, and the REST fetch of discussion threads."""
+"""Merge requests: the snapshot model, the GraphQL snapshot fetch, and the REST fetches of discussion threads and of
+the head commit's external statuses."""
 
 from __future__ import annotations
 
@@ -7,15 +8,18 @@ from typing import Any
 
 from glab_cli_extras.discussion.models import UserInfo
 from glab_cli_extras.gitlab import queries
-from glab_cli_extras.gitlab.client import GitLabClient, NotFound, encode_project
+from glab_cli_extras.gitlab.client import GitLabClient, NotFound, Unauthorized, encode_project
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.gitlab.values import gid_to_int, lower
 from glab_cli_extras.serde import stable_hash
+from glab_cli_extras.status.diff import external_statuses
 from glab_cli_extras.store.threads import is_system_discussion
 
 THREAD_LIST_THRESHOLD = 3
 """Above this many changed threads, one paginated list request is cheaper than one request per thread."""
 MAX_THREAD_PAGES = 10
+MAX_STATUS_PAGES = 5
+"""The head commit's statuses include every job of every pipeline on it, 100 to a page."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +37,17 @@ class ThreadState:
     resolvable: bool
     resolved: bool
     notes: tuple[NoteState, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalStatus:
+    """A commit status on the head that no job of the head pipeline produced: a quality gate outside the CI, say."""
+
+    name: str
+    status: str
+    description: str | None = None
+    target_url: str | None = None
+    allow_failure: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +78,15 @@ class MrSnapshot:
     """The names of the head pipeline's failed jobs that may not fail; free in the same query."""
     threads: tuple[ThreadState, ...] | None = None
     """None when no subscriber wants comment events, so the query leaves discussions out."""
+    assignees: tuple[str, ...] | None = None
+    labels: tuple[str, ...] | None = None
+    blocking_threads_resolved: bool | None = None
+    """GitLab's `mergeableDiscussionsState`: no unresolved thread blocks the merge."""
+    external_statuses: tuple[ExternalStatus, ...] | None = None
+    """None when no subscriber wants external status events, so the head commit's statuses are not fetched.
+
+    The four fields above default to None, "unknown", so a snapshot kept by an older version compares with nothing
+    instead of reporting every label and assignee as new."""
 
 
 def _discussion_id(gid: Any) -> str:
@@ -138,7 +162,25 @@ def parse_mr(node: Any, project: str, threads: tuple[ThreadState, ...] | None) -
         if pipeline
         else (),
         threads=threads,
+        assignees=_usernames(node.get("assignees")),
+        labels=_names(node.get("labels"), "title"),
+        blocking_threads_resolved=_bool_or_none(node.get("mergeableDiscussionsState")),
     )
+
+
+def _names(connection: Any, key: str) -> tuple[str, ...] | None:
+    nodes = connection.get("nodes") if isinstance(connection, dict) else None
+    if not isinstance(nodes, list):
+        return None
+    return tuple(sorted(str(n[key]) for n in nodes if isinstance(n, dict) and n.get(key) is not None))
+
+
+def _usernames(connection: Any) -> tuple[str, ...] | None:
+    return _names(connection, "username")
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def _web_url(mr_url: Any, path: Any) -> str | None:
@@ -215,3 +257,43 @@ async def fetch_discussions(client: GitLabClient, ref: ResourceRef, ids: set[str
         if isinstance(discussion, dict):
             result[discussion_id] = discussion
     return result
+
+
+def parse_external_statuses(statuses: list[Any], pipeline_id: int | None) -> tuple[ExternalStatus, ...]:
+    """The statuses no job of the head pipeline produced, one per name, sorted by name.
+
+    The same rule as `glab-mr-status`: a status of the head pipeline is not external, and neither is a status that
+    carries the name of one of its jobs (an older pipeline's run of the same job). The job names come from the
+    statuses themselves, so this costs no request for the pipeline's jobs. GitLab lists the newest status first.
+    """
+    job_names = {
+        str(s.get("name"))
+        for s in statuses
+        if isinstance(s, dict) and pipeline_id is not None and s.get("pipeline_id") == pipeline_id
+    }
+    found: dict[str, ExternalStatus] = {}
+    for s in external_statuses(statuses, pipeline_id, job_names):
+        name = str(s.get("name"))
+        if name in found:
+            continue
+        found[name] = ExternalStatus(
+            name=name,
+            status=lower(s.get("status")),
+            description=s.get("description") or None,
+            target_url=s.get("target_url") or None,
+            allow_failure=bool(s.get("allow_failure")),
+        )
+    return tuple(found[name] for name in sorted(found))
+
+
+async def fetch_external_statuses(
+    client: GitLabClient, ref: ResourceRef, sha: str, pipeline_id: int | None
+) -> tuple[ExternalStatus, ...]:
+    """The external statuses of the head commit. One request per 100 statuses; a status list GitLab refuses or no
+    longer has (a commit pruned after a force-push) reads as none."""
+    path = f"projects/{encode_project(ref.project)}/repository/commits/{sha}/statuses"
+    try:
+        statuses = await client.get_pages(path, kind="statuses", max_pages=MAX_STATUS_PAGES)
+    except (NotFound, Unauthorized):
+        return ()
+    return parse_external_statuses(statuses, pipeline_id)

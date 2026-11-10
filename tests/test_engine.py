@@ -88,7 +88,9 @@ def test_an_mr_watch_reports_its_head_pipeline_from_the_mr_snapshot_alone(clock:
     engine = make_engine(fake, clock, tmp_path)
 
     async def scenario() -> None:
-        sub = engine.subscribe("client-a", MR, ALL_MR, "none")
+        # The external statuses are the one pipeline-group kind that costs a request of its own.
+        kinds_wanted = ALL_MR - {"external_status_changed"}
+        sub = engine.subscribe("client-a", MR, kinds_wanted, "none")
         await engine.poll_due_once()
         fake.routes[0] = Route(
             "MergeRequestSnapshot", {"data": gql_mr(threads=[], pipeline_id=5001, pipeline_status="FAILED")}

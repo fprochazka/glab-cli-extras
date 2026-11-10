@@ -101,6 +101,10 @@ def gql_mr(
     approved_by: list[str] | None = None,
     approvals_left: int = 1,
     reviewers: list[str] | None = None,
+    assignees: list[str] | None = None,
+    labels: list[str] | None = None,
+    threads_resolved: bool = True,
+    target_branch: str = "main",
     pipeline_id: int | None = 5001,
     pipeline_status: str = "RUNNING",
     pipeline_sha: str | None = None,
@@ -117,12 +121,15 @@ def gql_mr(
         "detailedMergeStatus": merge_status,
         "diffHeadSha": head_sha,
         "sourceBranch": "feature/login-form",
-        "targetBranch": "main",
+        "targetBranch": target_branch,
         "webUrl": f"https://{HOST}/{PROJECT}/-/merge_requests/{iid}",
         "approved": not approvals_left,
         "approvalsLeft": approvals_left,
         "approvedBy": {"nodes": [{"username": u} for u in approved_by or []]},
         "reviewers": {"nodes": [{"username": u} for u in reviewers or ["reviewer-one"]]},
+        "assignees": {"nodes": [{"username": u} for u in assignees or ["author-one"]]},
+        "labels": {"nodes": [{"title": t} for t in labels or ["backend"]]},
+        "mergeableDiscussionsState": threads_resolved,
         "headPipeline": (
             {
                 "id": f"gid://gitlab/Ci::Pipeline/{pipeline_id}",
@@ -244,4 +251,20 @@ def gql_branch_pipelines(entries: list[tuple[int, str]], project_id: int = 321) 
                 ]
             },
         }
+    }
+
+
+def rest_commit_status(
+    name: str, status: str, *, pipeline_id: int | None = None, target_url: str | None = None
+) -> dict[str, Any]:
+    return {
+        "id": abs(hash(name)) % 100000,
+        "sha": "b" * 40,
+        "ref": "feature/login-form",
+        "status": status,
+        "name": name,
+        "target_url": target_url,
+        "description": f"{name} says {status}",
+        "allow_failure": False,
+        "pipeline_id": pipeline_id,
     }

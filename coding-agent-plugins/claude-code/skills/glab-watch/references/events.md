@@ -17,13 +17,18 @@ Every event has `kind`, `resource`, `seq`, `observed_at` and `data`, and `artifa
 | `state_changed` | status | `from`, `to`, `reopened` | Merged or closed ends the watch. |
 | `draft_changed` | status | `draft` | Evaluate the caller's handover rule, if any. |
 | `title_changed` | status | `from`, `to` | |
+| `target_branch_changed` | status | `from`, `to` | The MR was re-targeted. A watch on the old target branch watches the wrong branch now; restart it on `to`. |
 | `description_changed` | status | | Read the MR description again if it matters. |
 | `merge_status_changed` | status | `from`, `to` | GitLab's transient values are already skipped. |
 | `approvals_changed` | status | `approved`, `approvals_left`, `approved_by`, `added`, `removed` | Tell a human approval from an AI approver's. |
 | `reviewers_changed` | status | `reviewers`, `added`, `removed` | Evaluate the handover rule, if any. |
+| `assignees_changed` | status | `assignees`, `added`, `removed` | Evaluate the handover rule, if any. |
+| `labels_changed` | status | `labels`, `added`, `removed` | Act on a label only if the caller gave it a meaning. |
+| `blocking_threads_resolved_changed` | status | `resolved` | `false`: an unresolved thread now blocks the merge. Also `true` in a project that does not require resolved threads. |
 | `pushed` | push | `from`, `to`, `forced`, `forced_reason` | Compare `to` with your own push. Verdicts and pipelines on `from` are stale. |
 | `head_pipeline_changed` | pipeline | `pipeline_id`, `status`, `previous_pipeline_id`, `web_url`, `watch_command` | A new pipeline for the head. Run `watch_command` for its jobs, if needed. |
 | `pipeline_status_changed` | pipeline | `pipeline_id`, `from`, `to`, `web_url`, `watch_command` | |
+| `external_status_changed` | pipeline | `name`, `from`, `to`, `allow_failure`, `description`, `target_url` | A commit status on the head that the head pipeline did not set, such as a quality gate outside the CI. `from` is `null` for a new one. Failed: open `target_url`; `glab-pipeline` does not see it. |
 | `pipeline_finished` | pipeline | `pipeline_id`, `status`, `failed_jobs`, `web_url`, `watch_command` | Failed: inspect with `glab-pipeline inspect` and read `summary.txt` first. |
 | `thread_created` | comments | `discussion_id`, `author`, `resolvable`, `resolved`, `notes`; the thread file in `artifacts` | Read the file. |
 | `thread_updated` | comments | `discussion_id`, `new_notes`, `edited_notes`, `removed_notes`, `last_author`, `resolved`; the file | Read the file. |

@@ -117,7 +117,7 @@ glab-watch: state: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/
 glab-watch: changelog: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/events.jsonl
 glab-watch: events: state_changed,draft_changed,pushed,… (always: watch_started,watch_degraded,watch_ended)
 glab-watch: ignored: thread_created,thread_updated,thread_resolved,thread_unresolved
-glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-v3.sock, log /run/user/1000/glab-cli-extras/daemon-v3.log
+glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-v4.sock, log /run/user/1000/glab-cli-extras/daemon-v4.log
 glab-watch: restart with: glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123 --events=<kinds|groups> --exclude-events=<kinds|groups> (groups: status, comments, push, pipeline)
 ```
 
@@ -146,8 +146,11 @@ Lifecycle events come with every resource and cannot be filtered out:
 - `state_changed` (`from`, `to`, and `reopened: true` for closed to opened), `draft_changed`, `title_changed`, `description_changed`
 - `pushed`: `from`, `to`, `forced`. A force-push is detected with one `merge_base` request per push.
 - `merge_status_changed`: GitLab's transient `checking`, `unchecked` and `preparing` are skipped, and so is every change once the MR is merged or closed.
-- `approvals_changed`, `reviewers_changed`
+- `target_branch_changed` (`from`, `to`): the MR was re-targeted, for example onto another MR's branch or back onto the default branch.
+- `approvals_changed`, `reviewers_changed`, and `assignees_changed` and `labels_changed` (the new list, `added`, `removed`).
+- `blocking_threads_resolved_changed` (`resolved`): GitLab's "all threads must be resolved" check flipped. It is `true` whenever no unresolved thread blocks the merge, also in a project that does not require resolved threads.
 - `head_pipeline_changed`, `pipeline_status_changed` (`from`, `to`) and `pipeline_finished` (with `failed_jobs` when it failed) for the head pipeline. These are pipeline-level only: an MR watch reports no job events and downloads no logs. Each one has the pipeline's `web_url` and `watch_command`, the `glab-watch pipeline <url>` command that watches it job by job. The head pipeline's status comes with the MR's own snapshot query, so it costs no extra request.
+- `external_status_changed` (`name`, `from`, `to`, `allow_failure`, `description`, `target_url`): a commit status on the head that no job of the head pipeline set, such as a quality gate outside the CI. `from` is `null` for a new status. The statuses are the same `glab-mr-status` prints as `failed external status:`. They cost one request per 100 statuses of the head commit, made when the head, the head pipeline or an unfinished external status moved, and otherwise about every five minutes. A status that disappears, as on a push, is not reported.
 - `thread_created`, `thread_updated`, `thread_resolved`, `thread_unresolved`, each with the thread's file in `artifacts`. GitLab can show a thread unresolved for a poll or two after a force-push; a `thread_unresolved` within two polls of a `pushed` has `after_push: true`.
 - `quiet` (`after`, `head_sha`, `pipeline_id`) with `--quiet-after`, and `pipeline_stuck` (`after`, `pipeline_id`, `status`, `web_url`, `watch_command`) with `--stuck-after`.
 
@@ -161,15 +164,15 @@ One `glab-discussion drafts publish` changes the MR in up to three ways at once:
 
 `--events` and `--exclude-events` take kinds and these groups:
 
-- `status`: `state_changed`, `draft_changed`, `merge_status_changed`, `approvals_changed`, `reviewers_changed`, `title_changed`, `description_changed`, `quiet`, and all `mr_*`.
+- `status`: `state_changed`, `draft_changed`, `merge_status_changed`, `approvals_changed`, `reviewers_changed`, `assignees_changed`, `labels_changed`, `blocking_threads_resolved_changed`, `title_changed`, `description_changed`, `target_branch_changed`, `quiet`, and all `mr_*`.
 - `comments`: `thread_*`.
 - `push`: `pushed`, `force_pushed`, `created`, `deleted`.
-- `pipeline`: `head_pipeline_changed`, `pipeline_status_changed`, `status_changed`, `job_*`, `downstream_created`, `finished`, `pipeline_created`, `pipeline_finished`, `pipeline_stuck`.
+- `pipeline`: `head_pipeline_changed`, `external_status_changed`, `pipeline_status_changed`, `status_changed`, `job_*`, `downstream_created`, `finished`, `pipeline_created`, `pipeline_finished`, `pipeline_stuck`.
 
 A group brings `quiet` and `pipeline_stuck` only when their option is given.
 - `lifecycle`: `watch_started`, `watch_degraded`, `watch_ended`; always on.
 
-The filter is checked at start. An unknown kind or group, or one the resource never produces, is an error, so a typo does not silently mean "no events". The filter also saves API work: an MR watch without `comments` never fetches threads, and one without `pipeline` leaves the head pipeline out of its query.
+The filter is checked at start. An unknown kind or group, or one the resource never produces, is an error, so a typo does not silently mean "no events". The filter also saves API work: an MR watch without `comments` never fetches threads, and one without `pipeline` leaves the head pipeline out of its query and fetches no commit statuses.
 
 ### Output streams
 
@@ -211,7 +214,7 @@ glab-watch daemon logs -n 100 # the end of the daemon's log, 50 lines by default
 glab-watch daemon stop        # running watchers start a new daemon on their next poll and carry on
 ```
 
-- **One daemon per user.** It holds an OS lock on `daemon-v3.lock` in its state dir (`$XDG_RUNTIME_DIR/glab-cli-extras/` on Linux, `$TMPDIR/glab-cli-extras/` on macOS, `%LOCALAPPDATA%\glab-cli-extras\run\` on Windows). Watchers that start at the same moment start one daemon, not one each.
+- **One daemon per user.** It holds an OS lock on `daemon-v4.lock` in its state dir (`$XDG_RUNTIME_DIR/glab-cli-extras/` on Linux, `$TMPDIR/glab-cli-extras/` on macOS, `%LOCALAPPDATA%\glab-cli-extras\run\` on Windows). Watchers that start at the same moment start one daemon, not one each.
 - **Leases.** Each watcher polls the daemon every 5 s, which renews its subscriptions. A watcher that dies stops costing anything 20 s later.
 - **Restarts.** If the daemon goes away, watchers start a new one and subscribe again. The new daemon compares GitLab's state with the snapshot each watcher kept, so a change made in between is still reported, and nothing is reported twice.
 - **Budget.** The daemon paces each host on GitLab's `RateLimit-Remaining` and `RateLimit-Reset` headers and uses at most half of what is left. A host without those headers gets 60 requests a minute. When the budget is short, every poll interval grows by the same factor. A 429 pauses the whole host for its `Retry-After`.

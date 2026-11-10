@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Added:
+
+- `glab-watch mr` reports `target_branch_changed`, `assignees_changed`, `labels_changed` and `blocking_threads_resolved_changed` in the `status` group, and `external_status_changed` in the `pipeline` group: a commit status on the head that no job of the head pipeline set, the one `glab-mr-status` prints as `failed external status:`. The first four come with the MR's snapshot query at no extra cost. The external statuses cost one request per 100 statuses of the head commit, made when the head, the head pipeline or an unfinished external status moved, and otherwise about every five minutes. A watch filtered to other groups fetches none. The `watch_started` summary adds `assignees`, `labels`, `blocking_threads_resolved` and `external_statuses`.
+
+Changed:
+
+- The daemon's protocol version is 4, so a running 0.4 daemon, which knows none of the new event kinds, is left to stop on its own and a new one starts next to it. Its socket and lock are `daemon-v4.*`.
+
 ## 0.4.2 (2026-11-10)
 
 Changed:

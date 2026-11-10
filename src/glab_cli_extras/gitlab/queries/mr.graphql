@@ -21,6 +21,9 @@ query MergeRequestSnapshot(
       approvalsLeft
       approvedBy { nodes { username } }
       reviewers { nodes { username } }
+      assignees { nodes { username } }
+      labels(first: 100) { nodes { title } }
+      mergeableDiscussionsState
       headPipeline @include(if: $withPipeline) {
         id
         status
