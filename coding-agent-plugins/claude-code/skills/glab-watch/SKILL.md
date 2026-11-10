@@ -41,9 +41,11 @@ glab-watch branch group/project main
 
 - **Start watchers from the main session.** A watcher started from a subagent messages the main session anyway; Claude Code has no route to a subagent.
 
-### Never pass `--events-stream`
+### Leave `--events-stream` at its default
 
-Start every watcher **without** `--events-stream`. The default, `auto`, sends the events to this session as messages when the watcher runs under a session that accepts them, and falls back to stdout, with the reason, when it cannot. Forcing `--events-stream=stdout` sends the events into the background task's output file, which nobody reads while the session waits: the session hears nothing. Forcing `claude-message` gains nothing over `auto`, and fails at start where `auto` would fall back. The option exists for scripts and terminals, not for agents.
+Start every watcher **without** `--events-stream`. The default, `auto`, sends each event to this session as a message when the watcher runs under a session that accepts them, so you learn about a change when it happens, without checking. When it cannot, it falls back to stdout and says why.
+
+With `--events-stream=stdout`, the events go only to the background task's output and to `events.jsonl`. Nothing tells you when one arrives, so you would have to read those files yourself, again and again, to notice a change. `--events-stream=claude-message` gains nothing over `auto`, and fails at start where `auto` would fall back. The option is there for scripts and terminals.
 
 ## The startup header
 
