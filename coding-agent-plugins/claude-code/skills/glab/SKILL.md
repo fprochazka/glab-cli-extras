@@ -44,6 +44,7 @@ Write a description, a comment, a JSON body or a GraphQL query into a file first
   ```
 
 - **One field from a file**: `-F <name>=@<file>` puts the file's content into that field. This also works for a GraphQL query: `glab api graphql -F query=@<scratchpad>/open-mrs.graphql`.
+- **An option with no file variant**: pass the file's content with a quoted command substitution, `--<option> "$(cat <scratchpad>/<file>)"`. The double quotes keep the whole file as one argument, and the shell does not expand anything inside the substituted text. Prefer a `-file` option or `@file` where one exists. MR comments and replies are not a case for this: they go through `glab-discussion`, below.
 
 `-F` (`--field`) and `-f` (`--raw-field`) are not the same flag with two spellings:
 
