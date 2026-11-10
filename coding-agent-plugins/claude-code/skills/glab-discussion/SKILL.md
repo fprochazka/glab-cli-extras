@@ -111,7 +111,9 @@ glab-discussion drafts delete --force                        # delete them all
 ```
 
 - **Every review carries a verdict.** Without `--verdict` it is `reviewed`, but only when you have given the MR no verdict yet. If you have, `drafts publish` publishes nothing and exits non-zero: decide which verdict this review gives, ask the user when unsure, and pass `--verdict`.
-- A new verdict replaces your earlier one: the command revokes your approval or your request for changes when the new verdict differs. GitLab sets a verdict only for reviewers, so the command adds you as a reviewer first when you are not one, which adds a system note.
+- **`drafts publish` can stop with `Error: … Nothing was published.`** for two more reasons. The drafts stay pending, and the summary is not added yet.
+  - **You are not a reviewer.** GitLab sets a verdict only for reviewers, so the command adds you, keeping the other reviewers, and checks that GitLab did; this adds a system note. GitLab drops a reviewer it cannot add without an error, for example on an MR that allows one reviewer when someone else is it. Tell the user: making you the reviewer means replacing another one, and that is their call.
+  - **Your earlier verdict could not be removed.** GitLab before 19.2 does not replace a verdict, so the command first revokes your approval when the new verdict is not `approve`, and removes your request for changes when it is not `requested-changes` (GitLab EE 17.8+). Tell the user what GitLab answered. Do not pick another verdict just to get past the error.
 - Afterwards it reads the verdict back and exits non-zero when it was not applied. Tell the user what it reports.
 - Drafts belong to the GitLab login that wrote them. When glab runs as the user, the user sees them in the GitLab review panel too.
 
