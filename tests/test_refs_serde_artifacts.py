@@ -6,7 +6,14 @@ import pytest
 
 from fakeglab import FakeGlab
 from glab_cli_extras.discussion.models import UserInfo
-from glab_cli_extras.gitlab.refs import RefError, ResourceRef, parse_id_ref, parse_repo_ref
+from glab_cli_extras.gitlab.refs import (
+    RefError,
+    ResourceRef,
+    normalize_mr_url,
+    parse_id_ref,
+    parse_mr_url,
+    parse_repo_ref,
+)
 from glab_cli_extras.paths import project_dir, sanitize_part
 from glab_cli_extras.resources.mr import MrSnapshot, parse_mr, parse_threads
 from glab_cli_extras.resources.pipeline import PipelineSnapshot, parse_pipeline
@@ -128,3 +135,29 @@ def test_paths_never_escape_their_root(tmp_path: Path) -> None:
     assert sanitize_part("a/../b") == "a---b"
     path = project_dir(tmp_path, "127.0.0.1:8080", "group/../etc")
     assert path.is_relative_to(tmp_path) and ".." not in path.parts
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    ["", "/", "/diffs", "/commits", "/pipelines", "/overview", "?tab=diffs", "#note_123", "/diffs?view=inline#note_9"],
+)
+def test_an_mr_url_with_a_tab_query_or_anchor_names_the_plain_mr(suffix: str) -> None:
+    plain = f"https://{HOST}/group/sub/project/-/merge_requests/42"
+    assert parse_mr_url(plain + suffix) == (HOST, "group/sub/project", 42)
+    assert normalize_mr_url(plain + suffix) == plain
+    http = f"http://{HOST}/{PROJECT}/-/merge_requests/7"
+    assert normalize_mr_url(f"{http}/diffs") == http
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://{HOST}/{PROJECT}/-/merge_requests/",
+        f"https://{HOST}/{PROJECT}/-/merge_requests/42abc",
+        f"https://{HOST}/{PROJECT}/-/pipelines/42",
+        f"{HOST}/{PROJECT}/-/merge_requests/42",
+    ],
+)
+def test_a_url_that_names_no_mr_is_refused(url: str) -> None:
+    with pytest.raises(RefError, match="Invalid GitLab MR URL"):
+        parse_mr_url(url)

@@ -13,6 +13,7 @@ from conftest import Clock
 from fakeglab import FakeGlab, Route
 from glab_cli_extras.cli.discussion import main as discussion_main
 from glab_cli_extras.discussion import read
+from glab_cli_extras.discussion.context import resolve_mr_context
 from glab_cli_extras.discussion.models import MrContext
 from glab_cli_extras.gitlab.client import GitLabClient
 from glab_cli_extras.gitlab.refs import ResourceRef
@@ -168,3 +169,22 @@ def test_a_body_with_a_signature_line_reaches_the_thread_file_byte_for_byte(
     run_read(gitlab, clock, capsys)
     content = next(p for p in threads_dir(tmp_path).glob("*.txt") if A[:12] in p.name).read_bytes()
     assert f"(note:1):\n{signed}\n".encode() in content
+
+
+@pytest.mark.parametrize("suffix", ["/diffs", "#note_7", "/diffs#note_7", "/commits?page=2"])
+def test_the_thread_files_link_the_plain_mr_url_whatever_suffix_the_given_one_had(
+    suffix: str, gitlab: Gitlab, clock: Clock, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    ctx = resolve_mr_context(Namespace(mr_url=MR_URL + suffix))
+    assert ctx == CTX
+    gitlab.refresh()
+    # Without the MR's own web URL in the snapshot, the files fall back to the URL the caller gave.
+    snapshot = gql_mr(threads=gitlab.threads)
+    snapshot["project"]["mergeRequest"]["webUrl"] = None
+    gitlab.fake.routes[0] = Route("MergeRequestSnapshot", {"data": snapshot})
+    client = GitLabClient(HOST, runner=gitlab.fake, clock=clock)
+    read.run_with_context(Namespace(dump=True, no_dump=False, full=False), ctx, client)
+    url_lines = [
+        line for path in threads_dir(tmp_path).glob("*.txt") for line in path.read_text().splitlines() if "URL:" in line
+    ]
+    assert sorted(url_lines) == sorted([f"URL: {MR_URL}#note_1", f"URL: {MR_URL}#note_7"])

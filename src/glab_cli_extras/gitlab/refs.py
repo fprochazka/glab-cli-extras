@@ -161,15 +161,32 @@ class BranchMr:
     source_branch: str | None
 
 
-_MR_URL_RE = re.compile(r"^https?://(?P<host>[^/]+)/(?P<project>.+?)/-/merge_requests/(?P<iid>\d+)/?$")
+_MR_URL_RE = re.compile(
+    r"^(?P<scheme>https?)://(?P<host>[^/?#]+)/(?P<project>.+?)/-/merge_requests/(?P<iid>\d+)"
+    r"(?:/[^?#]*)?(?:\?[^#]*)?(?:#.*)?$"
+)
+"""An MR URL as a browser shows it: also with a tab (`/diffs`, `/commits`, `/pipelines`, `/overview`), a query string
+or an anchor such as `#note_<id>` after the MR's number."""
 
 
 def parse_mr_url(url: str) -> tuple[str, str, int]:
-    """`https://<host>/<project>/-/merge_requests/<iid>` → (host, project, iid). Raises RefError otherwise."""
+    """`https://<host>/<project>/-/merge_requests/<iid>`, with any tab, query or anchor → (host, project, iid).
+    Raises RefError otherwise."""
     match = _MR_URL_RE.match(url.strip())
     if not match:
         raise RefError(f"Invalid GitLab MR URL: {url}")
     return match.group("host"), match.group("project"), int(match.group("iid"))
+
+
+def normalize_mr_url(url: str) -> str:
+    """The plain URL of the MR an MR URL points into: no tab, query or anchor. Raises RefError like `parse_mr_url`.
+
+    Links built from it, such as a thread's `<mr url>#note_<id>`, then get exactly one anchor."""
+    match = _MR_URL_RE.match(url.strip())
+    if not match:
+        raise RefError(f"Invalid GitLab MR URL: {url}")
+    scheme, host, project, iid = match.group("scheme", "host", "project", "iid")
+    return f"{scheme}://{host}/{project}/-/merge_requests/{iid}"
 
 
 _PIPELINE_URL_RE = re.compile(r"^https?://(?P<host>[^/]+)/(?P<project>.+?)/-/pipelines/(?P<id>\d+)/?$")

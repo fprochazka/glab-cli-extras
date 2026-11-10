@@ -11,7 +11,7 @@ import argparse
 
 from glab_cli_extras.discussion.models import MrContext
 from glab_cli_extras.gitlab.client import encode_project
-from glab_cli_extras.gitlab.refs import current_branch_mr, parse_mr_url
+from glab_cli_extras.gitlab.refs import current_branch_mr, normalize_mr_url, parse_mr_url
 
 
 class ContextError(ValueError):
@@ -23,7 +23,7 @@ def resolve_mr_context(args: argparse.Namespace) -> MrContext:
     mr_url = getattr(args, "mr_url", None)
     if mr_url:
         host, path, iid = parse_mr_url(mr_url)
-        return MrContext(host, encode_project(path), path, iid, mr_url)
+        return MrContext(host, encode_project(path), path, iid, normalize_mr_url(mr_url))
     hostname = getattr(args, "hostname", None)
     project = getattr(args, "project", None)
     mr_iid = getattr(args, "mr_iid", None)

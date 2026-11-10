@@ -10,6 +10,8 @@ Fixed:
 
 - `glab-pipeline inspect --with-merged-ci-config` runs the two-step lint, the one that resolves `include:` against the source branch, also when the pipeline is given by `--pipeline-url` or `--pipeline-id`. The branch comes from the pipeline's own ref, and for a merge request pipeline from its MR's source branch, at one extra request. Before, such a pipeline fell back to the cheap lint with a warning, and `--pipeline-id` alone linted the current branch's MR even for another branch's pipeline.
 
+- `glab-discussion` and `glab-pipeline inspect` accept an `--mr-url` copied from the browser: with a tab such as `/diffs`, `/commits`, `/pipelines` or `/overview`, a query string, or an anchor such as `#note_<id>`, as `glab-mr-status` and `glab-watch` already did. The URL is reduced to the MR's own URL, so the `URL:` lines of the thread files and the links the write commands print carry one anchor each.
+
 Changed:
 
 - The daemon's protocol version is 4, so a running 0.4 daemon, which knows none of the new event kinds, is left to stop on its own and a new one starts next to it. Its socket and lock are `daemon-v4.*`.
