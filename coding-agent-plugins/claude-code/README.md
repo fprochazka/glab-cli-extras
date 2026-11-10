@@ -38,12 +38,14 @@ Two enabled plugins named `glab` collide: Claude Code loads the hooks of only on
 - `glab:glab-pipeline`: `glab-pipeline inspect`, the dump it writes into the pipeline's dir, and the order to read it in: the summary first, then only the files it names.
 - `glab:glab-discussion`: `glab-discussion` for reading threads into files and for writing, resolving, editing and deleting comments; the signature line on posted comments, the draft environment variable, and giving a review with a verdict.
 - `glab:glab`: the glab CLI. Merge requests, issues, pipeline actions, releases, variables, schedules, labels, and the raw API with pagination and GraphQL, with a list of the commands the Bash guard denies and what to use instead.
-- `glab:glab-watch`: starting `glab-watch` in the background so GitLab events arrive as messages, reading its header, filters and thresholds, reacting to each event kind, stopping a watcher, and the files it writes. `references/events.md` lists every event.
-- `glab:mr-status`: how to read a merge request with `glab-mr-status` and how to judge what it prints: the accepted-green set, a pipeline or verdict on a superseded head, profiling each AI reviewer from its own threads instead of assuming how a bot behaves, the newest verdict plus the currently unresolved threads rather than old finding notes, human review separated from the author's own comments, and what blocks the merge right now.
+- `glab:glab-watch`: starting `glab-watch` in the background so GitLab events arrive as messages, reading its header, filters and thresholds, reacting to each event kind, stopping a watcher, and the files it writes. Its references hold what the commands below read too:
+  - `references/events.md` lists every event.
+  - `references/glab-mr-status.md` says how to run `glab-mr-status` and read its change lines, files and exit codes.
+  - `references/judging-review-state.md` says how to judge what either command reports: the accepted-green set, a pipeline or verdict on a superseded head, profiling each AI reviewer from its own threads instead of assuming how a bot behaves, the newest verdict plus the currently unresolved threads rather than old finding notes, human review separated from the author's own comments, and what blocks the merge right now.
 
 ## Commands
 
-Each command runs `glab-mr-status` for the MR of the current branch, as `glab` finds it, before Claude reads anything. None of them changes code.
+Each command runs `glab-mr-status` for the MR of the current branch, as `glab` finds it, before Claude reads anything, and reads the glab-watch skill's references to interpret and judge the result. None of them changes code.
 
 - `/glab:overview`: the full MR state (pipeline, threads, external statuses) and what blocks the merge, without taking any action.
 - `/glab:comments`: the threads, unresolved and resolved, with a proposal for each. It re-reads the resolved threads, because AI reviewers post findings that land there and a resolved thread does not prove the problem is fixed.
@@ -56,7 +58,7 @@ Each command runs `glab-mr-status` for the MR of the current branch, as `glab` f
 
 ## Permissions
 
-The skills pre-approve the read-only commands they run in their `allowed-tools`: `glab-mr-status`, `glab-discussion read`, `glab-pipeline inspect`, and the read-only `glab` subcommands and `--help` pages. The mr-status skill also pre-approves `glab api`, which covers writes through the API too. The `comments` command carries `glab-discussion` in full, because it replies to and resolves threads, and the `pipeline` command carries `glab-pipeline` in full. Everything else, `glab-watch` included, asks the first time. To allow the skills to load without a prompt, add `Skill(glab)` and the other skill names to `permissions.allow` in your settings.
+The skills pre-approve the read-only commands they run in their `allowed-tools`: `glab-mr-status`, `glab-discussion read`, `glab-pipeline inspect`, and the read-only `glab` subcommands and `--help` pages. The `comments` command carries `glab-discussion` in full, because it replies to and resolves threads, and the `pipeline` command carries `glab-pipeline` in full. Everything else, `glab-watch` included, asks the first time. To allow the skills to load without a prompt, add `Skill(glab)` and the other skill names to `permissions.allow` in your settings.
 
 ## License
 

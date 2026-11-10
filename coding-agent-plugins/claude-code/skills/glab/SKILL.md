@@ -4,8 +4,8 @@ description: >-
   This skill should be used when the user works with GitLab through the glab CLI: "create an MR",
   "update the MR description", "mark the MR ready", "merge the MR", "list merge requests", "list issues",
   "call the GitLab API", "glab api", CI variables, releases, schedules, labels. For MR comments use
-  glab-discussion, for a failed pipeline glab-pipeline, for waiting on CI or review glab-watch, for review
-  state mr-status.
+  glab-discussion, for a failed pipeline glab-pipeline, for waiting on CI or review and for review state
+  glab-watch.
 trigger-keywords: gitlab, glab, merge request, MR
 allowed-tools: Bash(glab --help), Bash(glab help:*), Bash(glab alias --help), Bash(glab api --help), Bash(glab auth --help), Bash(glab changelog --help), Bash(glab ci --help), Bash(glab ci artifact --help), Bash(glab ci cancel --help), Bash(glab ci config --help), Bash(glab ci delete --help), Bash(glab ci lint --help), Bash(glab ci list --help), Bash(glab ci retry --help), Bash(glab ci run --help), Bash(glab ci run-trig --help), Bash(glab ci status --help), Bash(glab ci trigger --help), Bash(glab cluster --help), Bash(glab config --help), Bash(glab deploy-key --help), Bash(glab duo --help), Bash(glab gpg-key --help), Bash(glab incident --help), Bash(glab issue --help), Bash(glab issue board --help), Bash(glab issue close --help), Bash(glab issue create --help), Bash(glab issue delete --help), Bash(glab issue list --help), Bash(glab issue note --help), Bash(glab issue reopen --help), Bash(glab issue subscribe --help), Bash(glab issue unsubscribe --help), Bash(glab issue update --help), Bash(glab issue view --help), Bash(glab iteration --help), Bash(glab iteration list --help), Bash(glab job --help), Bash(glab label --help), Bash(glab mcp --help), Bash(glab mcp serve --help), Bash(glab milestone --help), Bash(glab mr --help), Bash(glab mr approve --help), Bash(glab mr approvers --help), Bash(glab mr checkout --help), Bash(glab mr close --help), Bash(glab mr create --help), Bash(glab mr delete --help), Bash(glab mr diff --help), Bash(glab mr for --help), Bash(glab mr issues --help), Bash(glab mr list --help), Bash(glab mr merge --help), Bash(glab mr rebase --help), Bash(glab mr reopen --help), Bash(glab mr revoke --help), Bash(glab mr subscribe --help), Bash(glab mr todo --help), Bash(glab mr unsubscribe --help), Bash(glab mr update --help), Bash(glab mr view --help), Bash(glab opentofu --help), Bash(glab release --help), Bash(glab repo --help), Bash(glab schedule --help), Bash(glab securefile --help), Bash(glab snippet --help), Bash(glab ssh-key --help), Bash(glab stack --help), Bash(glab token --help), Bash(glab user --help), Bash(glab variable --help), Bash(glab issue list:*), Bash(glab issue view:*), Bash(glab ci artifact:*), Bash(glab ci lint:*), Bash(glab ci list:*), Bash(glab ci status:*), Bash(glab job artifact:*), Bash(glab mr approvers:*), Bash(glab mr diff:*), Bash(glab mr issues:*), Bash(glab mr list:*), Bash(glab mr view:*), Bash(glab schedule list:*)
 ---
@@ -74,7 +74,7 @@ glab mr create --fill --fill-commit-body --yes -b main --draft -a user1 --review
 glab mr view -F json
 ```
 
-For the review state (pipeline, approvals, threads, what changed since you last looked), run `glab-mr-status` instead; see the mr-status skill. For the threads, use `glab-discussion read`, never `glab mr view --comments`.
+For the review state (pipeline, approvals, threads, what changed since you last looked), run `glab-mr-status` instead; see the glab-watch skill. For the threads, use `glab-discussion read`, never `glab mr view --comments`.
 
 ## Updating title, description and state
 

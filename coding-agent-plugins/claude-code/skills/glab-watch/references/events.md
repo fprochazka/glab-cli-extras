@@ -25,7 +25,7 @@ Every event has `kind`, `resource`, `seq`, `observed_at` and `data`, and `artifa
 | `head_pipeline_changed` | pipeline | `pipeline_id`, `status`, `previous_pipeline_id`, `web_url`, `watch_command` | A new pipeline for the head. Run `watch_command` for its jobs, if needed. |
 | `pipeline_status_changed` | pipeline | `pipeline_id`, `from`, `to`, `web_url`, `watch_command` | |
 | `pipeline_finished` | pipeline | `pipeline_id`, `status`, `failed_jobs`, `web_url`, `watch_command` | Failed: inspect with `glab-pipeline inspect` and read `summary.txt` first. |
-| `thread_created` | comments | `discussion_id`, `author`, `resolvable`, `resolved`, `notes`; the thread file in `artifacts` | Read the file; classify the author with the mr-status skill. |
+| `thread_created` | comments | `discussion_id`, `author`, `resolvable`, `resolved`, `notes`; the thread file in `artifacts` | Read the file; classify the author per `judging-review-state.md`. |
 | `thread_updated` | comments | `discussion_id`, `new_notes`, `edited_notes`, `removed_notes`, `last_author`, `resolved`; the file | Read the file. |
 | `thread_resolved` | comments | `discussion_id`; the file | |
 | `thread_unresolved` | comments | `discussion_id`, `after_push`; the file | With `after_push: true`, read the thread again before acting: it may be a moment of GitLab recomputing after a force-push. |

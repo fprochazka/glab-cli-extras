@@ -4,7 +4,8 @@ The snapshot is the REST merge request reduced to the fields the diff reads, plu
 The REST object, not the GraphQL snapshot the watcher uses, because only REST has the behind count, the labels, the
 assignees, `user_notes_count` and `blocking_discussions_resolved`.
 
-The ids and the line formats are a contract: the mr-status skill and the commands that call it read them.
+The ids and the line formats are a contract: the plugin's glab-watch skill documents them in
+references/glab-mr-status.md, and the commands that call it read them.
 """
 
 from __future__ import annotations

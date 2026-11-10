@@ -14,6 +14,7 @@ glab-mr-status --comments
 
 `glab-mr-status` dumped the discussions into per-thread files in the threads directory listed above.
 Read the discussion files to understand each thread, then analyze and propose what to do about them. No implementation yet.
+Classify each thread's authors and read each AI reviewer's latest verdict by `${CLAUDE_PLUGIN_ROOT}/skills/glab-watch/references/judging-review-state.md`.
 Load the `glab:glab-discussion` skill before you write anything.
 
 ### 1. Unresolved Comments
