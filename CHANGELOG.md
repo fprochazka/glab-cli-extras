@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 (2026-11-10)
+
+Breaking changes:
+
+- The `glab:mr-status` skill is removed. It described one command that the `/glab:overview`, `/glab:comments` and `/glab:pipeline` commands already run. Its content moved into two references of the `glab:glab-watch` skill, which the commands read too: `references/glab-mr-status.md` says how to run `glab-mr-status` and read its change lines, files and exit codes, and `references/judging-review-state.md` holds the rules for judging pipelines, AI reviewer verdicts, human review and merge blockers. A prompt or plugin that loads `glab:mr-status` by name should load `glab:glab-watch` instead, or run `glab-mr-status` directly. The format for reporting a set of MRs is dropped.
+- The `glab:glab` skill covers only the mistakes glab's own `--help` does not prevent: pagination that silently returns one page, long bodies passed inline instead of through a file, and which glab-cli-extras command replaces a raw glab call. The reference of glab commands and flags is gone; run `glab <command> --help`.
+
 ## 0.3.1 (2026-11-10)
 
 Fixed:
