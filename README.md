@@ -273,6 +273,7 @@ glab-discussion read --full              # delete the thread files and write the
 glab-discussion write --body - < reply.md --reply-to <discussion id>     # reply to a thread
 glab-discussion write --body "…" --file src/app.py --new-line 42         # a diff note on a line of the newest diff version
 glab-discussion write --body "…" --draft                                 # a pending draft only you see
+glab-discussion write --body "…" --note                                  # a plain comment, not a resolvable thread
 glab-discussion resolve <discussion id>                                  # also --unresolve
 glab-discussion edit note:123 --body "…"                                 # or draft:123, as read prints the ids
 glab-discussion delete note:123
@@ -281,7 +282,7 @@ glab-discussion drafts publish --body - < summary.md --verdict reviewed  # publi
 glab-discussion drafts delete --force                                    # without --force, list your drafts
 ```
 
-`write` also takes `--old-line` and `--commit` for a diff note, and `--resolve` with `--reply-to` and `--draft` to resolve the thread when the draft is published. `--no-draft` publishes at once.
+`write` also takes `--old-line` and `--commit` for a diff note, and `--resolve` with `--reply-to` and `--draft` to resolve the thread when the draft is published. `--no-draft` publishes at once. `--note` posts a plain comment, which nobody can resolve, at once and never as a draft; it takes none of the thread, diff note and draft options.
 
 `read --dump` writes the threads into the `threads/` dir of the MR's dir (see [Where files go](#where-files-go)), the same dir `glab-watch mr` writes, and prints the dir and the files that changed:
 

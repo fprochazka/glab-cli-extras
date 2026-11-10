@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Added:
+
+- `glab-discussion write --note` posts a plain comment through the MR notes endpoint instead of starting a resolvable thread. It is never a draft, also under `GLAB_DISCUSSION_WRITE_AS_DRAFT=true`. With `--reply-to`, `--file`, `--new-line`, `--old-line`, `--commit`, `--draft` or `--resolve` it is a usage error, exit 2.
+
 Changed:
 
 - `glab-discussion write --draft --reply-to` explains GitLab's refusal of a second draft reply in a thread where you already have one: GitLab keeps one draft reply per user and thread, and answers `400` with `author_id has already been taken`, which the command printed as it came. The error names the existing draft, and says to edit it or to delete it and write the reply again.

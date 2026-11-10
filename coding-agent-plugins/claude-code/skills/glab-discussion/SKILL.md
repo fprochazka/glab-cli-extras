@@ -66,6 +66,7 @@ Pass every body from a file with `--body - < file`. When the file is missing, th
 
 ```bash
 glab-discussion write --body - < comment.md                                # a new general thread
+glab-discussion write --note --body - < comment.md                         # a plain comment that nobody has to resolve
 glab-discussion write --reply-to <discussion id> --body - < reply.md       # a reply
 glab-discussion write --file src/app.py --new-line 42 --body - < note.md   # a diff note on the newest diff version
 glab-discussion write --file src/app.py --old-line 10 --body - < note.md   # on a removed line
@@ -73,6 +74,7 @@ glab-discussion write --file src/app.py --new-line 42 --commit <sha> --body - < 
 ```
 
 - `--new-line` is the line in the MR's source branch, so a local checkout of it gives the number directly. `--new-line` alone works on an unchanged context line: the command adds the old line number GitLab needs there. A line outside every hunk is refused, since GitLab takes diff notes only on changed lines and their context.
+- `--note` posts a plain comment instead of a resolvable thread, for a status update or an answer that asks nothing of anyone. It is posted at once, never as a draft, and takes no `--reply-to`, diff note or draft option.
 - `--draft` writes a pending draft instead (it prints `draft:<id>`; a published comment prints `note:<id>`). With `--reply-to --draft`, `--resolve` resolves the thread when the draft is published.
 - **One draft reply per thread.** GitLab refuses a second draft reply in a thread where you already have one, and the error names that `draft:<id>`. Put the new text into it with `edit draft:<id>`, or delete it and write again.
 - **`GLAB_DISCUSSION_WRITE_AS_DRAFT=true` makes every `write` a draft** unless `--no-draft` is given; the output says so on a second line. When it says so, the comment is not posted yet. Publish it, or tell the user that it waits as a draft.

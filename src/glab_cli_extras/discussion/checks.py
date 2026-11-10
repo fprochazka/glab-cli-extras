@@ -24,6 +24,10 @@ class CheckError(Exception):
     """A write command refuses its input. The message is shown as `Error: <message>`."""
 
 
+class UsageError(ValueError):
+    """The options contradict each other. Reported like an argparse usage error, with exit 2."""
+
+
 def require_body(body: str) -> None:
     """Refuse an empty body, typically from `--body "$(cat <missing file>)"`. The body itself is never changed."""
     if not body.strip():

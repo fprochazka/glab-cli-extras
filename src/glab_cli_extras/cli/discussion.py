@@ -11,7 +11,7 @@ import sys
 from glab_cli_extras import __version__
 from glab_cli_extras.cli.deprecated import warn_if_installed
 from glab_cli_extras.cli.stdio import force_utf8_stdio
-from glab_cli_extras.discussion.checks import CheckError
+from glab_cli_extras.discussion.checks import CheckError, UsageError
 from glab_cli_extras.discussion.context import ContextError
 from glab_cli_extras.discussion.ids import parse_note_ref
 from glab_cli_extras.gitlab.client import ApiError
@@ -50,6 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
     write_parser = subparsers.add_parser("write", parents=[mr_parent], help="Create a new discussion or reply")
     write_parser.add_argument("--body", required=True, help='Note body text (use "-" for stdin)')
     write_parser.add_argument("--reply-to", metavar="DISCUSSION_ID", help="Reply to an existing discussion")
+    write_parser.add_argument(
+        "--note",
+        action="store_true",
+        default=False,
+        help="Post a plain comment, which cannot be resolved, instead of a new thread. Posted at once, never a draft",
+    )
     write_parser.add_argument("--file", help="File path for a diff note")
     write_parser.add_argument("--new-line", type=int, help="New-side line number for diff note")
     write_parser.add_argument("--old-line", type=int, help="Old-side line number for diff note")
@@ -175,7 +181,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     try:
         _dispatch(args, parser)
-    except ContextError as exc:
+    except (ContextError, UsageError) as exc:
         parser.error(str(exc))
     except CheckError as exc:
         print(f"Error: {exc}", file=sys.stderr)

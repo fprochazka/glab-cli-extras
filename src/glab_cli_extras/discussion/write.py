@@ -7,6 +7,7 @@ from typing import Any
 
 from glab_cli_extras.discussion.checks import (
     CheckError,
+    UsageError,
     anchor_line,
     explain_404,
     full_discussion_id,
@@ -98,8 +99,33 @@ def _diff_position(ctx: MrContext, args: argparse.Namespace) -> dict[str, Any]:
     return build_position(version, anchor.new_path, anchor.new_line, anchor.old_line, old_path=anchor.old_path)
 
 
+_NOTE_CONFLICTS = (
+    ("reply_to", "--reply-to"),
+    ("file", "--file"),
+    ("new_line", "--new-line"),
+    ("old_line", "--old-line"),
+    ("commit", "--commit"),
+    ("draft", "--draft"),
+    ("resolve", "--resolve"),
+)
+
+
+def _check_note_options(args: argparse.Namespace) -> None:
+    """A plain note is a general comment posted at once: it has no thread to join, no diff position and no draft."""
+    given = [flag for attr, flag in _NOTE_CONFLICTS if getattr(args, attr, None) not in (None, False)]
+    if given:
+        raise UsageError(
+            f"--note posts a plain comment at once, so it does not take {', '.join(given)}."
+            " Leave out --note for a thread, a reply, a diff note or a draft"
+        )
+
+
 def run(args: argparse.Namespace) -> None:
     # 1. Validate options before any API call
+    plain_note = getattr(args, "note", False)
+    if plain_note:
+        _check_note_options(args)
+
     if args.reply_to and args.file:
         print("Error: --reply-to and --file are mutually exclusive", file=sys.stderr)
         sys.exit(1)
@@ -111,7 +137,7 @@ def run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    draft = write_as_draft(args)
+    draft = not plain_note and write_as_draft(args)
     resolve = getattr(args, "resolve", False)
 
     if resolve and not (draft and args.reply_to):
@@ -132,6 +158,10 @@ def run(args: argparse.Namespace) -> None:
         args.reply_to = full_discussion_id(ctx, args.reply_to)
 
     # 4. Determine mode and execute
+    if plain_note:
+        _write_note(ctx, body)
+        return
+
     if draft:
         _write_draft(args, ctx, body, resolve)
         return
@@ -186,6 +216,23 @@ def run(args: argparse.Namespace) -> None:
         )
         note_id = result["notes"][0]["id"]
         print(f"Created discussion {result['id']} (note:{note_id}) - {ctx.mr_url}#note_{note_id}")
+
+
+def _write_note(ctx: MrContext, body: str) -> None:
+    result = glab_api(
+        f"projects/{ctx.project_id}/merge_requests/{ctx.mr_iid}/notes",
+        method="POST",
+        json_body={"body": body},
+        hostname=ctx.hostname,
+    )
+    note_id = (result or {}).get("id")
+    if note_id is None:
+        # A body of quick actions only: GitLab runs them, answers 202 with their summary, and keeps no note.
+        for message in (result or {}).get("summary") or []:
+            print(f"GitLab: {message}")
+        print(f"GitLab ran the body as quick actions and created no note - {ctx.mr_url}")
+        return
+    print(f"Created note:{note_id} - {ctx.mr_url}#note_{note_id}")
 
 
 def _write_draft(args: argparse.Namespace, ctx: MrContext, body: str, resolve: bool) -> None:

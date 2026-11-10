@@ -156,3 +156,50 @@ def test_a_second_draft_reply_still_explains_itself_when_the_drafts_cannot_be_li
     assert exit_info.value.code == 1
     err = capsys.readouterr().err
     assert "you already have a draft reply in discussion" in err and "Find it with 'glab-discussion read'" in err
+
+
+def test_a_note_is_a_plain_comment_on_the_notes_endpoint(
+    fake: FakeGlab, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # GLAB_DISCUSSION_WRITE_AS_DRAFT does not apply: a plain note is never a draft.
+    monkeypatch.setenv("GLAB_DISCUSSION_WRITE_AS_DRAFT", "true")
+    fake.routes = [Route(f"{MR_PATH}/notes", {"id": 601, "body": SIGNED_BODY}, status=201)]
+    run("write", "--note", "--body", "-", stdin=SIGNED_BODY, monkeypatch=monkeypatch)
+    assert writes(fake) == [("POST", f"{MR_PATH}/notes", {"body": SIGNED_BODY})]
+    assert capsys.readouterr().out == f"Created note:601 - {MR_URL}#note_601\n"
+
+
+def test_a_note_of_quick_actions_only_reports_what_gitlab_did(
+    fake: FakeGlab, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake.routes = [Route(f"{MR_PATH}/notes", {"commands_changes": {}, "summary": ["Added ~bug label."]}, status=202)]
+    run("write", "--note", "--body", "/label ~bug")
+    out = capsys.readouterr().out
+    assert "GitLab: Added ~bug label." in out and "created no note" in out
+
+
+@pytest.mark.parametrize(
+    ("options", "named"),
+    [
+        (["--reply-to", DISCUSSION], "--reply-to"),
+        (["--file", "app.py", "--new-line", "3"], "--file, --new-line"),
+        (["--old-line", "3"], "--old-line"),
+        (["--commit", "abc"], "--commit"),
+        (["--draft"], "--draft"),
+        (["--draft", "--reply-to", DISCUSSION, "--resolve"], "--reply-to, --draft, --resolve"),
+    ],
+)
+def test_a_note_refuses_the_options_of_threads_diff_notes_and_drafts(
+    fake: FakeGlab, capsys: pytest.CaptureFixture[str], options: list[str], named: str
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        run("write", "--note", "--body", "Text.", *options)
+    assert exit_info.value.code == 2
+    assert f"--note posts a plain comment at once, so it does not take {named}." in capsys.readouterr().err
+    assert fake.calls == []
+
+
+def test_a_note_takes_no_draft(fake: FakeGlab) -> None:
+    fake.routes = [Route(f"{MR_PATH}/notes", {"id": 602}, status=201)]
+    run("write", "--note", "--no-draft", "--body", "Text.")
+    assert writes(fake) == [("POST", f"{MR_PATH}/notes", {"body": "Text."})]
