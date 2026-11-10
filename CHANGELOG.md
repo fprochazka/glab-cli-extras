@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1 (2026-11-10)
+
+Changed:
+
+- The `glab:glab` skill's section on long bodies also covers options that take no file: pass the file's content as `--<option> "$(cat <file>)"`.
+
+Removed:
+
+- The `glab:glab-watch` skill's `references/glab-mr-status.md` and `references/judging-review-state.md`, and the pointers to them from the skills and the `/glab:overview`, `/glab:comments` and `/glab:pipeline` commands. `glab-mr-status --help` now covers its output: the files it writes into the MR's dir, the `state:`, `discussions:`, `pipeline dump:` and `failed external status:` lines that name the paths and the changed thread files, and that only the listed thread files need reading. The plugin no longer carries rules for judging pipelines, AI reviewer verdicts and merge blockers.
+
 ## 0.4.0 (2026-11-10)
 
 Breaking changes:
