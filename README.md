@@ -6,11 +6,14 @@ Extra commands for the [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`),
 - `glab-pipeline inspect` dumps a pipeline's state and job logs and prints a problem-driven summary.
 - `glab-discussion` reads a merge request's discussion threads into one file per thread, and writes comments, replies, resolves and reviews.
 - `glab-mr-status` reads merge requests once and reports what changed since the last read, with a one-line scorecard each.
+- `glab-search-code` runs a GitLab code search and downloads every file that matched, so you can read and grep them locally.
 - `glab-cli-extras-cc-hook` is a Claude Code hook that stops an agent from inspecting pipelines or reading and writing MR discussions with raw `glab`, and names the command to use instead.
 
 This package supersedes the standalone [glab-pipeline](https://github.com/fprochazka/glab-pipeline) and [glab-discussion](https://github.com/fprochazka/glab-discussion) packages: their commands live here, with the same options and output.
 
 Those two packages are deprecated. When one of them is still installed next to glab-cli-extras, its command prints one line on stderr before it runs, with the commands that replace it: `uv tool uninstall glab-pipeline && uv tool install glab-cli-extras`. Stdout and the exit code stay the same.
+
+`glab-search-code` replaces the standalone [glab-search-code](https://github.com/fprochazka/glab-search-code) tool, which has no deprecation wrapper. Both install a `glab-search-code` executable, so uninstall the old one first: `uv tool uninstall glab-search-code && uv tool install glab-cli-extras`. See [glab-search-code](#glab-search-code) for what changed.
 
 Every GitLab request goes through `glab api`, so `glab` handles authentication, hosts, OAuth refresh, proxies and certificates. No command reads or stores a token.
 
@@ -52,7 +55,7 @@ All the commands write into the same tree, one dir per resource, so a file one c
 
 - `<session scratchpad>/glab-cli-extras/` when the command runs under a Claude Code session, which Claude Code removes after a few months;
 - else `<temp dir>/glab-cli-extras-<uid>/`, private to the user, which the OS cleans;
-- or `--base-dir` for `glab-watch`, and `--output-dir` for `glab-pipeline inspect`, which names the pipeline's dir itself.
+- or `--base-dir` for `glab-watch`, and `--output-dir` for `glab-pipeline inspect` and `glab-search-code`, which names the resource's dir itself.
 
 The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipelines/<id>/`, `.../-/merge_requests/<iid>/`, `.../-/merge_requests/` for `glab-watch mrs` and `.../-/branches/<branch>/` for `glab-watch branch`. Each one has a `README.txt` that names its files:
 
@@ -62,6 +65,8 @@ The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipel
 - `threads/<created>-<author>-<id>.txt` in an MR's dir: one file per discussion thread. A header gives the full discussion id, the type, the file and line of a diff note, `Resolved:` on resolvable threads, and the URL. Then comes one `[<created>] @<username> (note:<id>):` block per note. Bot authors get a `bot-` file name prefix and a `[BOT]` tag, service accounts their display name. A file is rewritten only when the thread changed: a new reply, an edit, a resolve. `.meta.json` maps each discussion id to its file.
 - `status-baseline.json`, `status-events.log`, `mr.json` and `external-statuses.json` in an MR's dir: what `glab-mr-status` read. See [glab-mr-status](#glab-mr-status).
 - The pipeline dump in a pipeline's dir: `pipeline.json`, `jobs.json`, `bridges.json`, the lint, test report and downstream files when they apply, and `summary.json` and `summary.txt`. See [glab-pipeline](#glab-pipeline).
+
+A code search belongs to no project, so each `glab-search-code` run gets a new dir of its own: `<base>/<host>/-/search/<UTC time>-<query>-<hash>/`. See [glab-search-code](#glab-search-code).
 
 ## glab-watch
 
@@ -345,6 +350,44 @@ The read is printed and flushed before it is stored, so a read killed in between
 
 The exit code is 0 for a baseline or a read, 5 when no MR could be read, 1 for an error such as no MR on the current branch, and 2 for a usage error. When some MRs of a set fail and others are read, the exit code is 0 and each failed MR has a `READ_FAILED` line.
 
+## glab-search-code
+
+```bash
+glab-search-code 'GeneratedValue'                                  # the whole instance of the current directory's GitLab host
+glab-search-code 'GeneratedValue' --hostname gitlab.example.com    # another host, or outside a repository
+glab-search-code 'class MyService' --group group                   # one group and its subgroups
+glab-search-code 'class MyService' --project group/project         # one project
+glab-search-code 'GeneratedValue' --workers 20 --max-retries 8     # more requests at once, more attempts per request
+glab-search-code 'GeneratedValue' --output-dir /path/to/dir        # write the run there instead of a new dir
+glab-search-code 'GeneratedValue' -v                               # print every glab call and its HTTP status to stderr
+```
+
+`glab-search-code` runs GitLab's code search (`scope=blobs`) and downloads every file that matched, whole, from the ref the search ran on, usually the default branch. A search across a group or the whole instance needs Advanced search or Exact code search on the GitLab instance; without it GitLab answers 400, and the command says to pass `--project`. `--project` and `--group` exclude each other.
+
+Each run writes a new dir (see [Where files go](#where-files-go)):
+
+- `files/<project path>/<file path>`: each matching file once, also when it matched on several lines. The tree keeps the repository paths, so `rg` over `files/` prints paths you can open in a clone. A path component above 255 bytes is shortened and ends with a hash, and characters Windows rejects become `_`.
+- `metadata.json`: one entry per downloaded file, with `project_id`, `project_path`, `file_path`, `ref`, `output_file` (relative to the run's dir), `url` (the file on GitLab) and `hits` (the start lines of its matches).
+- `hits.json`: every match as GitLab returned it, with `project_path`, `path`, `ref`, `startline` and `data`, the matched lines.
+- `download.log`: one line per file, `OK`, `SKIP` (another file maps to the same output file) or `FAIL` with the reason.
+
+Progress goes to stderr. Stdout carries the summary, and its last two lines are always `Output directory: <dir>` and `Metadata file: <file>`, also when nothing matched:
+
+```text
+Search query: GeneratedValue
+Found 42 hits in 17 files of 5 projects
+Total files downloaded: 17
+Hits file: /tmp/glab-cli-extras-1000/gitlab.example.com/-/search/20261110T091500Z-GeneratedValue-3f2a6c0d/hits.json
+Output directory: /tmp/glab-cli-extras-1000/gitlab.example.com/-/search/20261110T091500Z-GeneratedValue-3f2a6c0d
+Metadata file: /tmp/glab-cli-extras-1000/gitlab.example.com/-/search/20261110T091500Z-GeneratedValue-3f2a6c0d/metadata.json
+```
+
+The search costs one request per 100 hits, the project paths one GraphQL request per 100 projects, and each file one request. `--workers` (1 to 50, default 10) caps the requests at once. `--max-retries` (default 5) is the number of attempts per request, the first one included: a rate limit waits for its `Retry-After`, and a 5xx or a network error waits longer after each attempt. 401, 403 and 404 are not retried. A file that still fails is logged and counted, and the run goes on.
+
+Without `--hostname`, the host comes from the current directory's repository, as `glab repo view` finds it; outside a repository `--hostname` is required. The exit code is 0 when the search ran, also with no hits or with failed downloads, 1 when the search failed, and 2 for a usage error.
+
+Compared with the standalone tool, a run writes into a new dir under the base dir instead of `<temp dir>/glab-code-search-<time>/`, files keep their repository paths instead of a flat `project__path__file` name, `--max-retries` defaults to 5 and also retries 5xx and network errors, `--hostname` is optional and no longer checked against glab's `config.yml`, and `--project` and `--group` are new. The query and the ref are URL-encoded, so `&`, `#`, `+` and spaces work.
+
 ## The Claude Code hook
 
 `glab-cli-extras-cc-hook` is a PreToolUse hook for the Bash tool. It denies a command that inspects pipelines, jobs or job logs with `glab ci view|get|trace` or the raw API (`glab api projects/…/pipelines/…`, `…/jobs/…/trace`, `…/ci/lint`), or that reads or writes MR discussions with `glab api …/notes|discussions|draft_notes`, `glab mr view --comments` or `glab mr note`. The deny reason names the rule that matched, the command to use instead and the skill that teaches it. Actions stay allowed: `glab ci list`, `glab ci status`, `glab ci run`, `glab ci retry`, the pipelines list endpoint, award emoji. The rules ship in the package, in `glab_cli_extras/cc_hook/rules/`.
@@ -373,6 +416,8 @@ Claude Code starts the hook on every Bash call. A command that does not contain 
 - **`mr_updated` is best effort.** GitLab does not move an MR's `updated_at` when it was touched less than a minute before, so a second change within that minute shows up only with the next change.
 - **Job logs of large jobs need GitLab 19.0** for the tail-only download. Older versions download the whole log.
 - **Deeper downstream pipelines** (a child of a child) are not watched. Their changes do reach the watched pipeline's ETag, but their jobs are not reported.
+- **Code search across a group or an instance needs Advanced search or Exact code search.** Without it, only `glab-search-code --project` works.
+- **A code search stops after 10,000 hits** (100 pages). The summary says so; narrow the query, or search a group or a project.
 - **SSH host aliases** in git remotes are resolved by glab, as glab resolves them. A remote glab cannot map to a configured host fails at start.
 
 ## Development

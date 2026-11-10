@@ -2,12 +2,14 @@
 
 The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipelines/<id>/` and
 `.../-/merge_requests/<iid>/`. A URL maps to its dir by eye, and the `-` segment cannot collide with a group or project
-path, because GitLab paths cannot be `-`. Every file about one resource lives in its dir: the canonical `state.json`,
+path, because GitLab paths cannot be `-`. A code search belongs to no project, so its runs go to
+`<base>/<host>/-/search/`. Every file about one resource lives in its dir: the canonical `state.json`,
 the watcher's changelog, the job logs or thread files, and a `README.txt` that names them.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -28,6 +30,13 @@ def pipeline_dir(base: Path, host: str, project: str, pipeline_id: int) -> Path:
 
 def mr_dir(base: Path, host: str, project: str, iid: int) -> Path:
     return project_dir(base, host, project) / "-" / "merge_requests" / str(iid)
+
+
+def search_dir(base: Path, host: str, stamp: str, query: str) -> Path:
+    """`<base>/<host>/-/search/<stamp>-<slug>`: a new dir per run. The hash keeps two queries apart whose readable
+    part sanitizes or truncates to the same text."""
+    digest = hashlib.sha1(query.encode("utf-8")).hexdigest()[:8]
+    return base / sanitize_part(host) / "-" / "search" / f"{stamp}-{sanitize_part(query)[:60]}-{digest}"
 
 
 def resource_dir(base: Path, ref: ResourceRef) -> Path:
@@ -89,6 +98,15 @@ Each merge request has its own dir next to these files: <iid>/.
 baseline.json  the last state the watcher saw, used after a daemon restart
 
 The branch's pipelines have their own dirs in ../../pipelines/<pipeline id>/.
+""",
+    "search": """One glab-search-code run: the files a GitLab code search matched, as they were on the searched ref.
+
+files/<project path>/<file path>   each matching file, downloaded whole. A path component longer than 255 bytes is
+                                   shortened and ends with a hash; metadata.json has the real path
+metadata.json  one entry per downloaded file: project_id, project_path, file_path, ref, output_file (relative to
+               this dir), url, and hits, the start lines of its matches
+hits.json      every match as GitLab returned it: project_path, path, ref, startline, and data, the matched lines
+download.log   one line per file: OK, SKIP (another file maps to the same output file) or FAIL with the reason
 """,
 }
 

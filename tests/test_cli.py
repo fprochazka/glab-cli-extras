@@ -64,8 +64,8 @@ def test_version() -> None:
     assert runner.invoke(app, ["--version"]).output.strip() == f"glab-watch {__version__}"
 
 
-@pytest.mark.parametrize("command", ["pipeline", "discussion"])
-def test_glab_pipeline_and_glab_discussion_name_the_package_in_their_version(
+@pytest.mark.parametrize("command", ["pipeline", "discussion", "search_code"])
+def test_glab_pipeline_glab_discussion_and_glab_search_code_name_the_package_in_their_version(
     command: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The plugin's session check tells these apart from the deprecated standalone packages by this line."""

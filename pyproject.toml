@@ -1,7 +1,7 @@
 [project]
 name = "glab-cli-extras"
 version = "0.5.1"
-description = "Extra commands for the GitLab CLI (glab): glab-watch reports changes to merge requests, pipelines and branches, glab-pipeline inspects a pipeline, and glab-discussion reads and writes merge request discussions."
+description = "Extra commands for the GitLab CLI (glab): glab-watch reports changes to merge requests, pipelines and branches, glab-pipeline inspects a pipeline, glab-discussion reads and writes merge request discussions, and glab-search-code downloads every file a GitLab code search matched."
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Filip Procházka", email = "dev@fprochazka.cz" }]
@@ -32,6 +32,7 @@ glab-watch = "glab_cli_extras.cli.watch:main"
 glab-pipeline = "glab_cli_extras.cli.pipeline:main"
 glab-discussion = "glab_cli_extras.cli.discussion:main"
 glab-mr-status = "glab_cli_extras.cli.mr_status:main"
+glab-search-code = "glab_cli_extras.cli.search_code:main"
 glab-cli-extras-cc-hook = "glab_cli_extras.cc_hook.entry:main"
 
 [build-system]

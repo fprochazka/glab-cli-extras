@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Added:
+
+- `glab-search-code` runs a GitLab code search and downloads every file that matched into a new dir per run, under the base dir the other commands use: `files/<project path>/<file path>`, `metadata.json`, `hits.json` with the matched lines, and `download.log`. It replaces the standalone glab-search-code tool; run `uv tool uninstall glab-search-code` before you install this release, because both install the same executable. What changed for its users:
+  - The run's dir is `<base>/<host>/-/search/<UTC time>-<query>-<hash>/` instead of `<temp dir>/glab-code-search-<time>/`, and `--output-dir` names it. Take it from the `Output directory:` line.
+  - Files keep their repository paths instead of a flat `project__path__file` name. A file that matched on several lines is downloaded once.
+  - `--hostname` is optional: the default is the host of the current directory's repository. glab's `config.yml` is no longer read.
+  - `--max-retries` is the number of attempts per request, default 5 instead of 3. Besides a rate limit, it also retries a 5xx and a network error, and waits for `Retry-After`.
+  - `--project` and `--group` search one project or one group. A search across a group or the instance needs Advanced search or Exact code search; a 400 for that says to pass `--project`.
+  - Progress goes to stderr; stdout carries only the summary, which still ends with the `Output directory:` and `Metadata file:` lines. `metadata.json` entries add `url` and `hits`, the start lines of the matches.
+  - The query and the ref are URL-encoded, so `&`, `#`, `+` and spaces in them work. A search that reaches 10,000 hits says it stopped.
+  - `--workers` outside 1 to 50 is a usage error, exit 2. `--version` prints `glab-cli-extras <version>`.
+
 ## 0.5.1 (2026-11-10)
 
 Changed:
