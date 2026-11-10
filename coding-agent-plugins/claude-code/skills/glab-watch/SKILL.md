@@ -82,8 +82,9 @@ Each batch arrives as one message:
 
 `references/events.md` lists every kind with its data. The usual reactions:
 
-- **`pipeline_finished` failed** (MR) or **`finished` failed** (pipeline): read `summary.txt` from `artifacts`, or run the event's `watch_command` or `glab-pipeline inspect`. Then follow the `glab:glab-pipeline` skill.
+- **`pipeline_finished` failed** (MR) or **`finished` failed** (pipeline): read `summary.txt` from `artifacts`, or run `glab-pipeline inspect`. Then follow the `glab:glab-pipeline` skill.
 - **`job_finished` failed**: open the log in `artifacts`.
+- **`watch_command`** in an event starts another watcher. Start it in the background like any watcher, never in the foreground: it does not return until that watch ends.
 - **`external_status_changed` to `failed`**: a check outside the CI failed on the head. `glab-pipeline` does not see it; its `target_url` and `description` say what failed.
 - **`target_branch_changed`**: the MR was re-targeted. A watch on the old target branch now watches the wrong branch.
 - **`thread_created`, `thread_updated`**: read only the thread file in `artifacts`, and note who wrote it: a human, an AI reviewer, the author, or your own signed comment.
@@ -94,7 +95,8 @@ Each batch arrives as one message:
 - **`draft_changed`, `reviewers_changed`, `assignees_changed`**: if the caller defined a handover rule, evaluate it now.
 - **`quiet`, `pipeline_stuck`**: act as the caller's purpose says; they report that nothing happened.
 - **`watch_degraded`**: `auth`, tell the user to run `glab auth status`; `rate_limited`, nothing to do; `not_found`, check the ref; `daemon_mismatch`, run `glab-watch daemon stop`, and the watchers continue on a new daemon.
-- **`watch_ended`**: the reason says why: `merged`, `closed`, `finished`, `until`, `timeout`, `idle`, `not_found`, `session_gone`, or a signal.
+- **`watch_ended`**: the reason says why: `merged`, `closed`, `finished`, `until`, `timeout`, `idle`, `not_found`, `session_gone`, or a signal. A background task that ends without a `watch_ended` event ended for an unknown reason. `merged`, `closed` and `finished` are the resource's own end, and `until`, `timeout` and `idle` are the ends you asked for; the caller's purpose decides what follows them.
+- **A watcher that ended for any other reason** while you still need it, and that you did not stop, leaves the resource unwatched. Start the same command again, with all its options, note the new task id, and tell the user in one line. On `not_found`, tell the user instead. When the same resource ends with the same reason again within minutes, do not restart it a second time: report it to the user as a failure.
 
 ### When to ask the user
 

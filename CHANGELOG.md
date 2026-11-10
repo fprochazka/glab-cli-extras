@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Changed:
+
+- The `glab:glab-watch` skill says what to do when a watcher ends early, and how to run a `watch_command`, so the skills that start watchers need not say it. A watcher that ended for a reason other than its resource's end or an end you asked for is started again with all its options, and the user is told; `not_found` goes to the user instead, and a second end with the same reason within minutes is reported as a failure, not restarted again. A background task that ends without `watch_ended` ended for an unknown reason. The `watch_command` of an event starts another watcher, so it runs in the background, never in the foreground.
+
 ## 0.5.0 (2026-11-10)
 
 Added:

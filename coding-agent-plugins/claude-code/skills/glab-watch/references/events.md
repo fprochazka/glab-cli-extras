@@ -8,7 +8,7 @@ Every event has `kind`, `resource`, `seq`, `observed_at` and `data`, and `artifa
 |------|------|-------|
 | `watch_started` | `summary`: the current state | Read the summary as the starting point. Changes before it are not events. |
 | `watch_degraded` | `reason`, `message` | `auth`: tell the user to run `glab auth status`. `rate_limited`: nothing to do, polling slows down. `not_found`: check the ref. `error`: report the message. `daemon_mismatch`: run `glab-watch daemon stop`; the watchers start a current daemon. Each reason comes once, not per failed poll. |
-| `watch_ended` | `reason`: `merged`, `closed`, `finished`, `not_found`, `until`, `timeout`, `idle`, `session_gone`, or the signal | The watcher has exited. Restart it only if the caller's purpose still needs it. |
+| `watch_ended` | `reason`: `merged`, `closed`, `finished`, `not_found`, `until`, `timeout`, `idle`, `session_gone`, or the signal | The watcher has exited. The skill says when to start it again. |
 
 ## `glab-watch mr`
 
@@ -26,7 +26,7 @@ Every event has `kind`, `resource`, `seq`, `observed_at` and `data`, and `artifa
 | `labels_changed` | status | `labels`, `added`, `removed` | Act on a label only if the caller gave it a meaning. |
 | `blocking_threads_resolved_changed` | status | `resolved` | `false`: an unresolved thread now blocks the merge. Also `true` in a project that does not require resolved threads. |
 | `pushed` | push | `from`, `to`, `forced`, `forced_reason` | Compare `to` with your own push. Verdicts and pipelines on `from` are stale. |
-| `head_pipeline_changed` | pipeline | `pipeline_id`, `status`, `previous_pipeline_id`, `web_url`, `watch_command` | A new pipeline for the head. Run `watch_command` for its jobs, if needed. |
+| `head_pipeline_changed` | pipeline | `pipeline_id`, `status`, `previous_pipeline_id`, `web_url`, `watch_command` | A new pipeline for the head. For its jobs, start `watch_command` in the background, if needed. |
 | `pipeline_status_changed` | pipeline | `pipeline_id`, `from`, `to`, `web_url`, `watch_command` | |
 | `external_status_changed` | pipeline | `name`, `from`, `to`, `allow_failure`, `description`, `target_url` | A commit status on the head that the head pipeline did not set, such as a quality gate outside the CI. `from` is `null` for a new one. Failed: open `target_url`; `glab-pipeline` does not see it. |
 | `pipeline_finished` | pipeline | `pipeline_id`, `status`, `failed_jobs`, `web_url`, `watch_command` | Failed: inspect with `glab-pipeline inspect` and read `summary.txt` first. |
@@ -35,7 +35,7 @@ Every event has `kind`, `resource`, `seq`, `observed_at` and `data`, and `artifa
 | `thread_resolved` | comments | `discussion_id`; the file | |
 | `thread_unresolved` | comments | `discussion_id`, `after_push`; the file | With `after_push: true`, read the thread again before acting: it may be a moment of GitLab recomputing after a force-push. |
 | `quiet` | status | `after`, `head_sha`, `pipeline_id` | Only with `--quiet-after`. The head is green and nothing else was reported for `after`. |
-| `pipeline_stuck` | pipeline | `after`, `pipeline_id`, `status`, `web_url`, `watch_command` | Only with `--stuck-after`. Look at the running jobs with `watch_command` or `glab-pipeline inspect`. |
+| `pipeline_stuck` | pipeline | `after`, `pipeline_id`, `status`, `web_url`, `watch_command` | Only with `--stuck-after`. Look at the running jobs with `glab-pipeline inspect`, or start `watch_command` in the background. |
 
 An MR watch reports its head pipeline at the pipeline level only; job events and job logs need `glab-watch pipeline`.
 
