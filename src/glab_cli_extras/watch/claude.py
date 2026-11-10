@@ -2,7 +2,7 @@
 
 The watcher finds its session through the cc-blackbox SDK and sends user messages over the session's messaging
 socket. Events received close together go out as one message: the first event of a burst waits up to 3 s for the
-rest. Each message is a `<glab-cli-extras-watcher>` block, because the receiver shows the content to the model but
+rest. Each message is a `<glab-watcher>` block, because the receiver shows the content to the model but
 never the sender label. `seq` keeps every body unique, so the receiver's duplicate check never drops a real event.
 Only the message with `watch_started` names the resource dir and the changelog.
 
@@ -82,8 +82,8 @@ def format_message(ref: ResourceRef, events: list[Event], changelog: Path, *, an
     if announce:
         attributes += f' dir="{escape(str(changelog.parent))}" changelog="{escape(str(changelog))}"'
         events = [_without_announced_dir(e, changelog.parent) for e in events]
-    head = f"<glab-cli-extras-watcher {attributes}>"
-    tail = "</glab-cli-extras-watcher>"
+    head = f"<glab-watcher {attributes}>"
+    tail = "</glab-watcher>"
     body = "\n".join(_event_line(e) for e in events)
     content = f"{head}\n{body}\n{tail}"
     if len(content.encode("utf-8")) <= MAX_CONTENT_BYTES:

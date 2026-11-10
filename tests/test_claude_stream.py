@@ -114,7 +114,7 @@ def test_a_burst_goes_out_as_one_message_after_three_seconds(receiver: Receiver,
     content = frame["message"]["content"]
     assert content.startswith('<cross-session-message from="did:glab-watch:')
     assert 'from-name="glab-watch mr group/project!42"' in content
-    assert f'<glab-cli-extras-watcher resource="{REF.key}" seq="3-4">' in content
+    assert f'<glab-watcher resource="{REF.key}" seq="3-4">' in content
     assert '{"kind":"thread_created","seq":4,"data":{"discussion_id":"abc"}}' in content
 
 
@@ -135,7 +135,7 @@ def test_only_the_first_watch_started_message_names_the_dir_and_the_changelog(
         clock.advance(3)
         sink.tick()
     frames = wait_frames(receiver, 3)
-    heads = [f["message"]["content"].split("<glab-cli-extras-watcher ", 1)[1].split(">", 1)[0] for f in frames]
+    heads = [f["message"]["content"].split("<glab-watcher ", 1)[1].split(">", 1)[0] for f in frames]
     # The announcing message names the dir once, in its head; the summary gives the threads dir relative to it.
     assert '"summary":{"iid":42,"threads":{"total":2,"dir":"threads"}}' in frames[0]["message"]["content"]
     assert heads == [

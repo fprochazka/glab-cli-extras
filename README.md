@@ -192,10 +192,10 @@ glab-watch mr group/project!123 --exclude-events=comments
 The session sees each batch as a message from `glab-watch mr group/project!123`:
 
 ```text
-<glab-cli-extras-watcher resource="mr gitlab.example.com/group/project!123" seq="18-19">
+<glab-watcher resource="mr gitlab.example.com/group/project!123" seq="18-19">
 {"kind":"head_pipeline_changed","seq":18,"data":{"pipeline_id":456,"web_url":"https://gitlab.example.com/group/project/-/pipelines/456","watch_command":"glab-watch pipeline https://gitlab.example.com/group/project/-/pipelines/456","status":"running","previous_pipeline_id":455}}
 {"kind":"thread_created","seq":19,"data":{"discussion_id":"6a1f…","author":"reviewer-one","resolvable":true,"resolved":false,"notes":1},"artifacts":["/tmp/claude-1000/…/scratchpad/glab-cli-extras/…/merge_requests/123/threads/2026-11-09T09-30-reviewer-one-6a1f….txt"]}
-</glab-cli-extras-watcher>
+</glab-watcher>
 ```
 
 - **Paths.** The first message, the one with `watch_started`, also carries `dir="…"` and `changelog="…"`: the resource dir and its `events.jsonl`. Its `watch_started` gives the threads dir relative to that dir, and stdout and `events.jsonl` keep the full paths. Later messages leave the paths out, also after a daemon restart; each event's `artifacts` keep their absolute paths, so a file opens without the first message.

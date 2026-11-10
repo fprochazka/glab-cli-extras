@@ -4,9 +4,9 @@ description: >-
   This skill should be used when the session has to wait for something on GitLab or react to it as it
   happens: "watch this MR", "wait for the pipeline", "tell me when CI finishes", "let me know when someone
   comments", "watch the branch", "watch every MR of the project", "babysit the MR", or when a
-  `<glab-cli-extras-watcher>` message arrives. Covers starting glab-watch in the background, its startup
+  `<glab-watcher>` message arrives. Covers starting glab-watch in the background, its startup
   header, event filters, reacting to its messages, stopping it, and the files it writes.
-trigger-keywords: glab-watch, watch mr, wait for pipeline, wait for ci, glab-cli-extras-watcher
+trigger-keywords: glab-watch, watch mr, wait for pipeline, wait for ci, glab-watcher
 allowed-tools: ["Bash(glab-watch --help)", "Bash(glab-watch daemon status:*)", "Bash(glab-watch daemon logs:*)", "Bash(glab-mr-status:*)"]
 ---
 
@@ -69,10 +69,10 @@ Before anything else, read the header in the background task's output. Each line
 Each batch arrives as one message:
 
 ```text
-<glab-cli-extras-watcher resource="mr gitlab.example.com/group/project!123" seq="18-19">
+<glab-watcher resource="mr gitlab.example.com/group/project!123" seq="18-19">
 {"kind":"head_pipeline_changed","seq":18,"data":{"pipeline_id":456,"status":"running","watch_command":"glab-watch pipeline https://gitlab.example.com/group/project/-/pipelines/456"}}
 {"kind":"thread_created","seq":19,"data":{"discussion_id":"6a1f…","author":"reviewer-one","resolvable":true,"resolved":false,"notes":1},"artifacts":["/…/merge_requests/123/threads/2026-11-09T09-30-reviewer-one-6a1f….txt"]}
-</glab-cli-extras-watcher>
+</glab-watcher>
 ```
 
 - One JSON event per line. `artifacts` paths are always absolute. Only the first message, the one with `watch_started`, carries `dir="…"` and `changelog="…"`.
