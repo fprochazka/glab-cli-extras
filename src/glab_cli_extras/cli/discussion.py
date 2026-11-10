@@ -11,6 +11,7 @@ import sys
 from glab_cli_extras import __version__
 from glab_cli_extras.cli.deprecated import warn_if_installed
 from glab_cli_extras.cli.stdio import force_utf8_stdio
+from glab_cli_extras.config import ConfigError, load_settings
 from glab_cli_extras.discussion.checks import CheckError, UsageError
 from glab_cli_extras.discussion.context import ContextError
 from glab_cli_extras.discussion.ids import parse_note_ref
@@ -184,8 +185,14 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None
 def main(argv: list[str] | None = None) -> None:
     force_utf8_stdio()
     warn_if_installed("glab-discussion")
+    try:
+        settings = load_settings()
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     parser = build_parser()
     args = parser.parse_args(argv)
+    args.settings = settings
     try:
         _dispatch(args, parser)
     except (ContextError, UsageError) as exc:

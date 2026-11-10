@@ -6,6 +6,8 @@ Added:
 
 - `glab-discussion write --note` posts a plain comment through the MR notes endpoint instead of starting a resolvable thread. It is never a draft, also under `GLAB_DISCUSSION_WRITE_AS_DRAFT=true`. With `--reply-to`, `--file`, `--new-line`, `--old-line`, `--commit`, `--draft` or `--resolve` it is a usage error, exit 2.
 - `glab-discussion write --attach <image>`, repeatable, uploads a PNG, JPEG, GIF or WebP image to the MR's project (`POST /projects/:id/uploads`) and shows it in the comment: after the body text and a blank line, one image per line, in the order given, and before a signature line such as `<!-- plugin:command -->` when the body ends with one. It works for threads, replies, diff notes, `--note` and drafts. A file that is missing, or that is not one of these images by both its extension and its first bytes, stops the command before any request. The upload needs a glab whose `api` command has `--form`.
+- Settings that restrict the commands for unattended agents, read from `/etc/glab-cli-extras/config.toml`, the user's `~/.config/glab-cli-extras/config.toml` (`%PROGRAMDATA%` and `%APPDATA%` on Windows), the file `GLAB_CLI_EXTRAS_CONFIG` names, and one `GLAB_CLI_EXTRAS_<SECTION>_<KEY>` environment variable per setting. A restriction that any source sets applies, and no other source loosens it. An unknown table, key or value is an error, exit 1. See [Configuration](README.md#configuration).
+- `discussion.quick_actions = "reject"` makes `glab-discussion write`, `edit` and `drafts publish --body` refuse a body with a line that starts with `/word` outside a closed fenced code block, with exit 1 before any request. The review that `drafts publish` submits with `/submit_review` is not affected.
 
 Changed:
 

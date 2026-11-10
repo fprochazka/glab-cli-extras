@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fakeglab import FakeGlab  # noqa: E402
+from glab_cli_extras import config  # noqa: E402
 from glab_cli_extras.discussion.models import MrContext  # noqa: E402
 from glab_cli_extras.gitlab.client import GitLabClient  # noqa: E402
 from glab_cli_extras.resources.base import PollContext  # noqa: E402
@@ -58,6 +59,13 @@ def _isolated_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
     monkeypatch.setenv("GLAB_CLI_EXTRAS_BASE_DIR", str(tmp_path / "base"))
     for name in ("CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID"):
         monkeypatch.delenv(name, raising=False)
+    # No test may read the machine's config files or settings variables.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "config"))
+    monkeypatch.setattr(config, "system_config_file", lambda: tmp_path / "etc" / config.APP / config.CONFIG_FILE)
+    monkeypatch.delenv(config.CONFIG_ENV, raising=False)
+    for setting in config.SETTINGS:
+        monkeypatch.delenv(setting.env_var, raising=False)
     yield
 
 

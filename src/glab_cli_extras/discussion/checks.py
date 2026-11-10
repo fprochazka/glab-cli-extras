@@ -5,10 +5,13 @@ Each failed check ends the command with exit 1 before any write request, with a 
 
 from __future__ import annotations
 
+import argparse
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from glab_cli_extras.config import QUICK_ACTIONS, Settings, load_settings
 from glab_cli_extras.discussion.diff import HUNK_RE
 from glab_cli_extras.discussion.models import MrContext
 from glab_cli_extras.gitlab.sync_api import GlabApiError, glab_api
@@ -32,6 +35,66 @@ def require_body(body: str) -> None:
     """Refuse an empty body, typically from `--body "$(cat <missing file>)"`. The body itself is never changed."""
     if not body.strip():
         raise CheckError("the body is empty; nothing was sent")
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# Quick actions
+
+# A `/command` with its arguments or nothing after it. GitLab runs only the commands it knows; any word counts here.
+_QUICK_ACTION_RE = re.compile(r"^\s*(/[A-Za-z][\w-]*)(?:\s|$)")
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _fence_close(lines: list[str], start: int, fence: str) -> int | None:
+    """The index of the line that closes the fence opened at `start`, or None when the fence is never closed."""
+    closing = re.compile(rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$")
+    return next((i for i in range(start + 1, len(lines)) if closing.match(lines[i])), None)
+
+
+def quick_action_lines(body: str) -> list[tuple[int, str]]:
+    """The lines GitLab may run as a quick action, with their 1-based numbers.
+
+    A line whose text starts with `/word`, outside a closed fenced code block. This is stricter than GitLab: any
+    word counts, not only the commands of the instance, and an indented line counts too, since GitLab strips the
+    indent of a paragraph's continuation line. An unclosed fence protects nothing, because older GitLab versions
+    match only closed ones.
+    """
+    lines = body.split("\n")
+    found: list[tuple[int, str]] = []
+    i = 0
+    while i < len(lines):
+        fence = _FENCE_RE.match(lines[i])
+        if fence:
+            close = _fence_close(lines, i, fence.group(1))
+            if close is not None:
+                i = close + 1
+                continue
+        match = _QUICK_ACTION_RE.match(lines[i])
+        if match:
+            found.append((i + 1, lines[i].strip()))
+        i += 1
+    return found
+
+
+def settings_of(args: argparse.Namespace) -> Settings:
+    """The settings `main` loaded for this command, or the current ones for a caller that loaded none."""
+    settings = getattr(args, "settings", None)
+    return settings if isinstance(settings, Settings) else load_settings()
+
+
+def refuse_quick_actions(body: str, settings: Settings) -> None:
+    """Refuse a body with a quick action when the `discussion.quick_actions` setting rejects them. Only for text the
+    user supplied: the requests the commands make themselves, such as `/submit_review`, never pass through here."""
+    if not settings.quick_actions_rejected:
+        return
+    found = quick_action_lines(body)
+    if not found:
+        return
+    shown = "; ".join(f"line {number}: {text[:60]}" for number, text in found[:3])
+    raise CheckError(
+        f"the body has lines that GitLab runs as quick actions ({shown}), and {settings.describe(QUICK_ACTIONS)}"
+        " refuses them. Put such text in a fenced code block or in backticks, or remove it; nothing was sent"
+    )
 
 
 # ------------------------------------------------------------------------------------------------------------------

@@ -408,6 +408,28 @@ The `glab` plugin registers it, through a wrapper that never blocks a Bash call 
 
 Claude Code starts the hook on every Bash call. A command that does not contain `glab` is answered without parsing, in about 10 ms over the interpreter's own start; one that does takes about 55 ms over it, most of it bash-classify's import and its YAML command definitions. A hook that crashes prints nothing and exits 1, which Claude Code shows as a hook error and treats as no opinion.
 
+## Configuration
+
+A few settings restrict what the commands may do, for a machine that runs coding agents unattended. They are not command-line options, so an agent cannot turn them off on its own. Without any configuration nothing is restricted.
+
+```toml
+[discussion]
+quick_actions = "reject"  # "allow" (default) or "reject"
+```
+
+- `discussion.quick_actions = "reject"`: `glab-discussion write`, `edit` and `drafts publish --body` refuse a body with a line that GitLab may run as a quick action, with exit 1 and before any request. Such a line starts with `/` and a word, such as `/approve` or `/label ~bug`, also after spaces, outside a closed fenced code block (```` ``` ```` or `~~~`). This is stricter than GitLab, which runs only the commands it knows: any word counts, and an unclosed fence protects nothing. Put text such as `/approve` in backticks or a fenced code block to post it. The quick action that `drafts publish` sends itself to submit the review is not affected.
+
+The settings come from these sources, and each one is read:
+
+- the system file: `/etc/glab-cli-extras/config.toml`, on Windows `%PROGRAMDATA%\glab-cli-extras\config.toml`;
+- the user file: `$XDG_CONFIG_HOME/glab-cli-extras/config.toml`, by default `~/.config/glab-cli-extras/config.toml`, also on macOS; on Windows `%APPDATA%\glab-cli-extras\config.toml`;
+- the file that `GLAB_CLI_EXTRAS_CONFIG` names, which must exist;
+- one environment variable per setting: `GLAB_CLI_EXTRAS_DISCUSSION_QUICK_ACTIONS`. An empty variable counts as unset.
+
+A restriction applies when any source sets it. A less restrictive value in another source does not loosen it, whatever the order: `quick_actions = "reject"` in `/etc` holds even when the user file or the environment says `"allow"`. To lift a restriction, remove it from every source that sets it. The error message of a refused command names the source.
+
+The files are strict. A file that is not valid TOML, or has an unknown table, key or value, stops every command with exit 1 and a message that names the file, so that a typo never leaves a restriction off. An unknown value in an environment variable does the same.
+
 ## Platform support
 
 - Linux and macOS: everything. The daemon listens on a Unix socket.

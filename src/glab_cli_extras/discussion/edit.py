@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from glab_cli_extras.discussion.checks import require_body
+from glab_cli_extras.discussion.checks import refuse_quick_actions, require_body, settings_of
 from glab_cli_extras.discussion.context import resolve_mr_context
 from glab_cli_extras.discussion.ids import NoteRef
 from glab_cli_extras.discussion.models import is_inline_draft_position
@@ -14,11 +14,12 @@ _POSITION_KEYS = ("position_type", "base_sha", "start_sha", "head_sha", "old_pat
 
 
 def run(args: argparse.Namespace) -> None:
-    ctx = resolve_mr_context(args)
     ref: NoteRef = args.note_ref
-
     body = sys.stdin.read() if args.body == "-" else args.body
     require_body(body)
+    refuse_quick_actions(body, settings_of(args))
+
+    ctx = resolve_mr_context(args)
 
     mr_path = f"projects/{ctx.project_id}/merge_requests/{ctx.mr_iid}"
     if ref.is_draft:

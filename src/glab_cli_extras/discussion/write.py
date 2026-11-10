@@ -12,7 +12,9 @@ from glab_cli_extras.discussion.checks import (
     anchor_line,
     explain_404,
     full_discussion_id,
+    refuse_quick_actions,
     require_body,
+    settings_of,
 )
 from glab_cli_extras.discussion.context import resolve_mr_context
 from glab_cli_extras.discussion.models import MrContext, is_inline_draft_position, parse_draft_note
@@ -152,6 +154,7 @@ def run(args: argparse.Namespace) -> None:
     # 2. Read the body, and check the images before any request
     body = sys.stdin.read() if args.body == "-" else args.body
     require_body(body)
+    refuse_quick_actions(body, settings_of(args))
     images = check_images(getattr(args, "attach", None) or [])
 
     # 3. Resolve MR context, the full id of the discussion a reply goes to, and the position of a diff note

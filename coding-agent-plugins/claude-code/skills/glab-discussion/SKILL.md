@@ -81,6 +81,12 @@ glab-discussion write --reply-to <discussion id> --body - < reply.md --attach be
 - **One draft reply per thread.** GitLab refuses a second draft reply in a thread where you already have one, and the error names that `draft:<id>`. Put the new text into it with `edit draft:<id>`, or delete it and write again.
 - **`GLAB_DISCUSSION_WRITE_AS_DRAFT=true` makes every `write` a draft** unless `--no-draft` is given; the output says so on a second line. When it says so, the comment is not posted yet. Publish it, or tell the user that it waits as a draft.
 
+### Restrictions set by the machine's owner
+
+The owner of the machine can restrict `glab-discussion` in a config file or an environment variable, which you cannot change and must not try to work around.
+
+- **`the body has lines that GitLab runs as quick actions`**: quick actions are turned off. A line that starts with `/word`, such as `/approve`, would run as a GitLab command. Rewrite the text so that no line starts with `/`, or put such text in backticks or a fenced code block. Never retry the same body.
+
 ### Signing a posted comment
 
 Every comment a Claude Code command posts on an MR (a thread, a reply, a summary, a diff note) ends with a blank line and an HTML comment naming the command that caused it:
