@@ -13,6 +13,7 @@ Added:
   - Progress goes to stderr; stdout carries only the summary, which still ends with the `Output directory:` and `Metadata file:` lines. `metadata.json` entries add `url` and `hits`, the start lines of the matches.
   - The query and the ref are URL-encoded, so `&`, `#`, `+` and spaces in them work. A search that reaches 10,000 hits says it stopped.
   - `--workers` outside 1 to 50 is a usage error, exit 2. `--version` prints `glab-cli-extras <version>`.
+- The `glab:glab-search-code` skill teaches `glab-search-code`: the scope flags, the Advanced or Exact code search a group or instance search needs, taking the paths from the last two lines, and reading `hits.json` and `metadata.json` with `jq` before `rg` over the files. The `glab:glab` skill sends a code search across projects to it.
 
 ## 0.5.1 (2026-11-10)
 

@@ -105,6 +105,7 @@ def test_the_glab_skill_covers_pagination_bodies_in_files_and_the_extras_command
         "glab-discussion",
         "glab-watch",
         "glab-mr-status",
+        "glab-search-code",
         "--paginate",
         "--input",
     ):

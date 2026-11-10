@@ -5,7 +5,7 @@ Claude Code plugin for GitLab through the [glab CLI](https://gitlab.com/gitlab-o
 ## Requirements
 
 - `glab` installed, on `PATH`, and logged in to your GitLab host (`glab auth status`).
-- glab-cli-extras of the same minor version as the plugin, which provides `glab-watch`, `glab-mr-status`, `glab-pipeline`, `glab-discussion` and the Bash guard:
+- glab-cli-extras of the same minor version as the plugin, which provides `glab-watch`, `glab-mr-status`, `glab-pipeline`, `glab-discussion`, `glab-search-code` and the Bash guard:
 
   ```bash
   uv tool install glab-cli-extras
@@ -37,6 +37,7 @@ Two enabled plugins named `glab` collide: Claude Code loads the hooks of only on
 
 - `glab:glab-pipeline`: `glab-pipeline inspect`, the dump it writes into the pipeline's dir, and the order to read it in: the summary first, then only the files it names.
 - `glab:glab-discussion`: `glab-discussion` for reading threads into files and for writing, resolving, editing and deleting comments; the signature line on posted comments, the draft environment variable, and giving a review with a verdict.
+- `glab:glab-search-code`: `glab-search-code` for a code search across GitLab projects, the files it downloads, and the order to read them in: `hits.json`, `metadata.json`, then `rg` over the files.
 - `glab:glab`: the mistakes glab's own `--help` does not prevent: reading one page of a list and taking it for all of it, passing a long description or JSON body inline instead of through a file, and calling glab directly where a glab-cli-extras command does the job, with the forms the Bash guard denies.
 - `glab:glab-watch`: starting `glab-watch` in the background so GitLab events arrive as messages, reading its header, filters and thresholds, reacting to each event kind, stopping a watcher, and the files it writes. `references/events.md` lists every event.
 
@@ -55,7 +56,7 @@ Each command runs `glab-mr-status` for the MR of the current branch, as `glab` f
 
 ## Permissions
 
-The skills pre-approve the read-only commands they run in their `allowed-tools`: `glab-mr-status`, `glab-discussion read`, `glab-pipeline inspect`, and the read-only `glab` subcommands and `--help` pages. The `/glab:comments` command carries `glab-discussion` in full, because it replies to and resolves threads, and the `/glab:pipeline` command carries `glab-pipeline` in full. Everything else, `glab-watch` included, asks the first time. To allow the skills to load without a prompt, add `Skill(glab:glab)` and the other skills by their full `glab:` names to `permissions.allow` in your settings.
+The skills pre-approve the read-only commands they run in their `allowed-tools`: `glab-mr-status`, `glab-discussion read`, `glab-pipeline inspect`, `glab-search-code`, and the read-only `glab` subcommands and `--help` pages. The `/glab:comments` command carries `glab-discussion` in full, because it replies to and resolves threads, and the `/glab:pipeline` command carries `glab-pipeline` in full. Everything else, `glab-watch` included, asks the first time. To allow the skills to load without a prompt, add `Skill(glab:glab)` and the other skills by their full `glab:` names to `permissions.allow` in your settings.
 
 ## License
 
