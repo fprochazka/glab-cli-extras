@@ -17,7 +17,7 @@ from glab_cli_extras.cli import mr_status
 from glab_cli_extras.gitlab import sync_api
 from glab_cli_extras.gitlab.client import GitLabClient
 from glab_cli_extras.gitlab.refs import RefError, ResourceRef
-from glab_cli_extras.status import diff
+from glab_cli_extras.status import diff, read
 from glab_cli_extras.status.diff import Change, Details, details_lines, diff_snapshots, scorecard, settle
 from glab_cli_extras.status.read import EXIT_OK, EXIT_READ_FAILED, MrRead, ReadOptions, run
 from shapes import HOST, PROJECT, gql_mr, gql_thread, rest_discussion
@@ -485,3 +485,21 @@ def test_version_names_the_package(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         mr_status.main(["--version"])
     assert capsys.readouterr().out.startswith("glab-cli-extras ")
+
+
+def test_the_help_names_the_files_and_the_output_lines_an_agent_reads() -> None:
+    """The commands and skills that call glab-mr-status rely on --help for its output; no other doc describes it."""
+    text = mr_status.build_parser().format_help()
+    for name in (
+        read.MR_FILE,
+        read.EXTERNAL_STATUSES_FILE,
+        "threads/",
+        read.BASELINE_FILE,
+        read.EVENTS_LOG,
+        "state:",
+        "discussions:",
+        "pipeline dump:",
+        "failed external status:",
+        "read only the thread files",
+    ):
+        assert name in text

@@ -15,7 +15,6 @@ glab-mr-status --pipeline
 Analyze the MR pipeline state above, no implementation yet.
 Help triage any issues by analyzing the logs of any failed jobs and looking up the context and proposing fixes.
 If all jobs passed, report the pipeline status and note that no action is needed.
-A pipeline is green only when its status is `success` and it ran on the MR head; the pipeline section of `${CLAUDE_PLUGIN_ROOT}/skills/glab-watch/references/judging-review-state.md` explains `canceled`, `manual`, `skipped` and a superseded base.
 
 ### Reading the pipeline dump
 

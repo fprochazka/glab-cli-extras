@@ -4,12 +4,9 @@ description: >-
   This skill should be used when the session has to wait for something on GitLab or react to it as it
   happens: "watch this MR", "wait for the pipeline", "tell me when CI finishes", "let me know when someone
   comments", "watch the branch", "watch every MR of the project", "babysit the MR", or when a
-  `<glab-cli-extras-watcher>` message arrives. Also when the session reads an MR once with glab-mr-status
-  and has to judge it: "what is the status of MR X", "is this MR green", "who still has to review this",
-  "what blocks the merge". Covers starting glab-watch in the background, its startup header, event
-  filters, reacting to its messages, stopping it, the files it writes, reading glab-mr-status output,
-  and judging pipelines, AI reviewer verdicts and human review.
-trigger-keywords: glab-watch, watch mr, wait for pipeline, wait for ci, glab-cli-extras-watcher, glab-mr-status, mr status, what blocks the merge
+  `<glab-cli-extras-watcher>` message arrives. Covers starting glab-watch in the background, its startup
+  header, event filters, reacting to its messages, stopping it, and the files it writes.
+trigger-keywords: glab-watch, watch mr, wait for pipeline, wait for ci, glab-cli-extras-watcher
 allowed-tools: ["Bash(glab-watch --help)", "Bash(glab-watch daemon status:*)", "Bash(glab-watch daemon logs:*)", "Bash(glab-mr-status:*)"]
 ---
 
@@ -19,7 +16,7 @@ allowed-tools: ["Bash(glab-watch --help)", "Bash(glab-watch daemon status:*)", "
 
 ## Watch or read once
 
-- "What is it now?": run `glab-mr-status` or `glab-pipeline inspect`. One read, one answer. `references/glab-mr-status.md` says how to run `glab-mr-status` and read its output.
+- "What is it now?": run `glab-mr-status` or `glab-pipeline inspect`. One read, one answer. `glab-mr-status --help` describes its output.
 - "Tell me when it changes": start a watcher. **Never poll** with `sleep`, a loop, or repeated reads: a watcher costs a fraction of the API budget and reports the change within seconds of the next poll.
 
 ## Starting a watcher
@@ -83,12 +80,12 @@ Each batch arrives as one message:
 
 ## Reacting
 
-`references/events.md` lists every kind with its data. Judge what an event or a `glab-mr-status` read reports by `references/judging-review-state.md`: what counts as a green pipeline, how to profile each AI reviewer and read its latest verdict, how to tell human review from the author and bots, and what blocks the merge. The usual reactions:
+`references/events.md` lists every kind with its data. The usual reactions:
 
 - **`pipeline_finished` failed** (MR) or **`finished` failed** (pipeline): read `summary.txt` from `artifacts`, or run the event's `watch_command` or `glab-pipeline inspect`. Then follow the glab-pipeline skill.
 - **`job_finished` failed**: open the log in `artifacts`.
-- **`thread_created`, `thread_updated`**: read only the thread file in `artifacts`, and classify its author per `references/judging-review-state.md`: human, AI reviewer, the author, your own signed comment.
-- **A verdict by an AI reviewer**: read it per the reviewer's profile in `references/judging-review-state.md` and note the head it names.
+- **`thread_created`, `thread_updated`**: read only the thread file in `artifacts`, and note who wrote it: a human, an AI reviewer, the author, or your own signed comment.
+- **A verdict by an AI reviewer**: note the head it names.
 - **`pushed`**: compare `to` with the SHA you pushed before you treat it as someone else's push. Verdicts and green pipelines on the old head are stale from now on.
 - **`thread_unresolved` with `after_push: true`**: GitLab can show a thread unresolved for a moment after a force-push. Read the thread again before acting on it.
 - **`approvals_changed`**: name who approved and whether it is a human or an AI approver.

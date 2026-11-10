@@ -15,7 +15,7 @@ glab-mr-status --all
 Report the state of the merge request. Take no action and change no code.
 
 Cover the pipeline, the discussion threads, the external commit statuses, and what blocks the merge right now.
-`${CLAUDE_PLUGIN_ROOT}/skills/glab-watch/references/glab-mr-status.md` explains the change lines, the details and the scorecard above. Judge the pipeline, each AI reviewer's verdict, human review and the merge blockers by `${CLAUDE_PLUGIN_ROOT}/skills/glab-watch/references/judging-review-state.md`.
+`glab-mr-status --help` explains the change lines and the files above.
 
 ### Reading the pipeline dump
 

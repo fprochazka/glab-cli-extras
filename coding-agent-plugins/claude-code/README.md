@@ -38,14 +38,11 @@ Two enabled plugins named `glab` collide: Claude Code loads the hooks of only on
 - `glab:glab-pipeline`: `glab-pipeline inspect`, the dump it writes into the pipeline's dir, and the order to read it in: the summary first, then only the files it names.
 - `glab:glab-discussion`: `glab-discussion` for reading threads into files and for writing, resolving, editing and deleting comments; the signature line on posted comments, the draft environment variable, and giving a review with a verdict.
 - `glab:glab`: the mistakes glab's own `--help` does not prevent: reading one page of a list and taking it for all of it, passing a long description or JSON body inline instead of through a file, and calling glab directly where a glab-cli-extras command does the job, with the forms the Bash guard denies.
-- `glab:glab-watch`: starting `glab-watch` in the background so GitLab events arrive as messages, reading its header, filters and thresholds, reacting to each event kind, stopping a watcher, and the files it writes. Its references hold what the commands below read too:
-  - `references/events.md` lists every event.
-  - `references/glab-mr-status.md` says how to run `glab-mr-status` and read its change lines, files and exit codes.
-  - `references/judging-review-state.md` says how to judge what either command reports: the accepted-green set, a pipeline or verdict on a superseded head, profiling each AI reviewer from its own threads instead of assuming how a bot behaves, the newest verdict plus the currently unresolved threads rather than old finding notes, human review separated from the author's own comments, and what blocks the merge right now.
+- `glab:glab-watch`: starting `glab-watch` in the background so GitLab events arrive as messages, reading its header, filters and thresholds, reacting to each event kind, stopping a watcher, and the files it writes. `references/events.md` lists every event.
 
 ## Commands
 
-Each command runs `glab-mr-status` for the MR of the current branch, as `glab` finds it, before Claude reads anything, and reads the glab-watch skill's references to interpret and judge the result. None of them changes code.
+Each command runs `glab-mr-status` for the MR of the current branch, as `glab` finds it, before Claude reads anything. `glab-mr-status --help` describes its output. None of them changes code.
 
 - `/glab:overview`: the full MR state (pipeline, threads, external statuses) and what blocks the merge, without taking any action.
 - `/glab:comments`: the threads, unresolved and resolved, with a proposal for each. It re-reads the resolved threads, because AI reviewers post findings that land there and a resolved thread does not prove the problem is fixed.

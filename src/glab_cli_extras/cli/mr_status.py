@@ -25,10 +25,30 @@ ASSIGNEES_CHANGED, LABELS_CHANGED, APPROVALS_CHANGED, READ_FAILED.
 Exit codes: 0 a baseline or a read, 5 no MR could be read, 1 a fatal error, 2 a usage error.
 To wait for a change instead of polling, run `glab-watch mr`."""
 
+EPILOG = """\
+Files, in the MR's dir <base>/<host>/<project>/-/merge_requests/<iid>/:
+  mr.json                  the raw MR object, with the description
+  external-statuses.json   the commit statuses posted from outside the pipeline
+  threads/                 one file per thread, in the glab-discussion format
+  status-baseline.json     this reader's last read
+  status-events.log        every change it printed, in UTC
+The pipeline dump goes into the pipeline's own dir.
+
+Take every path from the output, never build one:
+  state:                   the MR dir, or the base dir when the read covered several MRs
+  discussions:             the threads dir, then the thread files this read rewrote, as updated:, new: and deleted:
+  pipeline dump:           the pipeline's dir and its summary text, then each failed job with its stage and reason
+  failed external status:  a failed commit status from outside the pipeline, with its URL
+
+A thread file is rewritten only when its content changed: read only the thread files the discussions: line lists."""
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="glab-mr-status", description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter
+        prog="glab-mr-status",
+        description=DESCRIPTION,
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "refs",
