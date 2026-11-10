@@ -37,7 +37,7 @@ Two enabled plugins named `glab` collide: Claude Code loads the hooks of only on
 
 - `glab:glab-pipeline`: `glab-pipeline inspect`, the dump it writes into the pipeline's dir, and the order to read it in: the summary first, then only the files it names.
 - `glab:glab-discussion`: `glab-discussion` for reading threads into files and for writing, resolving, editing and deleting comments; the signature line on posted comments, the draft environment variable, and giving a review with a verdict.
-- `glab:glab`: the glab CLI. Merge requests, issues, pipeline actions, releases, variables, schedules, labels, and the raw API with pagination and GraphQL, with a list of the commands the Bash guard denies and what to use instead.
+- `glab:glab`: the mistakes glab's own `--help` does not prevent: reading one page of a list and taking it for all of it, passing a long description or JSON body inline instead of through a file, and calling glab directly where a glab-cli-extras command does the job, with the forms the Bash guard denies.
 - `glab:glab-watch`: starting `glab-watch` in the background so GitLab events arrive as messages, reading its header, filters and thresholds, reacting to each event kind, stopping a watcher, and the files it writes. Its references hold what the commands below read too:
   - `references/events.md` lists every event.
   - `references/glab-mr-status.md` says how to run `glab-mr-status` and read its change lines, files and exit codes.

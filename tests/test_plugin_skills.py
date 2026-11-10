@@ -35,3 +35,34 @@ def test_every_plugin_file_a_skill_names_exists() -> None:
         if not (PLUGIN / target).is_file()
     ]
     assert missing == []
+
+
+SKILL_REF = re.compile(r"`glab:([a-z-]+)`")
+
+
+def test_every_glab_skill_the_plugin_and_the_hook_name_exists() -> None:
+    """The Bash guard's deny reasons and the skills send the agent to a skill by name; a removed or renamed skill
+    leaves the agent loading nothing."""
+    sources = [*sorted(PLUGIN.rglob("*.md")), *sorted((PLUGIN.parents[1] / "src" / "glab_cli_extras").rglob("*.py"))]
+    named = {name for path in sources for name in SKILL_REF.findall(path.read_text(encoding="utf-8"))}
+    assert named
+    assert sorted(name for name in named if not (PLUGIN / "skills" / name / "SKILL.md").is_file()) == []
+
+
+def test_the_glab_skill_covers_pagination_bodies_in_files_and_the_extras_commands() -> None:
+    """The glab skill exists for the mistakes glab's own --help does not prevent; each needs its section."""
+    text = (PLUGIN / "skills" / "glab" / "SKILL.md").read_text(encoding="utf-8")
+    assert re.findall(r"^## .+$", text, re.MULTILINE) == [
+        "## Pagination",
+        "## Long bodies go into a file",
+        "## Use the glab-cli-extras commands for their jobs",
+    ]
+    for command in (
+        "glab-pipeline inspect",
+        "glab-discussion",
+        "glab-watch",
+        "glab-mr-status",
+        "--paginate",
+        "--input",
+    ):
+        assert command in text
