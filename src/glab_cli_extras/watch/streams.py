@@ -7,6 +7,7 @@ it next to its other files; see `paths.base_dir`.
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,11 @@ def messaging_problem(session: ActiveSession | None) -> str | None:
     if sys.platform == "win32":
         return "the claude-message stream is not supported on Windows"
     if session is None:
+        if os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET"):
+            return (
+                "CLAUDE_CODE_MESSAGING_SOCKET is set, but cc-blackbox found no live session record for it"
+                " (the record is gone, or cc-blackbox judged its process not running)"
+            )
         return "no Claude Code session found (CLAUDE_CODE_MESSAGING_SOCKET is unset, or the session record is gone)"
     if session.can_receive_messages:
         return None
@@ -69,5 +75,7 @@ def open_stream(
         sink = ClaudeMessageSink(session, ref, changelog.events_path, cast(Priority, priority), status)
         return Stream(sink, changelog)
     # Under a Claude Code session, say why auto did not message it; outside one, stdout is simply the default.
-    fallback = problem if mode == "auto" and session is not None else None
+    # A messaging socket in the environment means the watcher runs under a session even when no record was found.
+    under_session = session is not None or bool(os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET"))
+    fallback = problem if mode == "auto" and under_session else None
     return Stream(StdoutSink(), changelog, fallback)

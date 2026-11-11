@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Fixed:
+
+- `glab-watch` with `--events-stream=auto` says why it sends events to stdout also when `CLAUDE_CODE_MESSAGING_SOCKET` is set but no live session record was found. Before, it fell back to stdout without a `stream fallback:` line.
+
 ## 0.7.0 (2026-11-10)
 
 Added:

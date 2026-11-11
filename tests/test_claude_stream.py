@@ -256,6 +256,19 @@ def test_an_incompatible_session_falls_back_to_stdout_with_a_reason(
         streams.open_stream("claude-message", REF, "next", None, status)
 
 
+def test_a_session_without_a_live_record_falls_back_to_stdout_with_a_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", str(tmp_path / "123.sock"))
+    monkeypatch.setattr(streams, "find_session", lambda: None)
+    chosen = streams.open_stream("auto", REF, "next", tmp_path / "out", StatusOutput())
+    assert isinstance(chosen.sink, StdoutSink)
+    assert chosen.fallback is not None and "no live session record" in chosen.fallback
+
+    monkeypatch.delenv("CLAUDE_CODE_MESSAGING_SOCKET")
+    assert streams.open_stream("auto", REF, "next", tmp_path / "out", StatusOutput()).fallback is None
+
+
 class RefusingSender:
     def __init__(self, error: Exception) -> None:
         self.error = error
