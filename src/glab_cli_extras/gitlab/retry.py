@@ -13,6 +13,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TypeVar
 
+from glab_cli_extras import paths
+from glab_cli_extras.gitlab.capabilities import DiskCapabilityStore
 from glab_cli_extras.gitlab.client import ApiError, GitLabClient, RateLimited, TransportError
 
 T = TypeVar("T")
@@ -53,5 +55,11 @@ class RetryPolicy:
 
 
 def standalone_client(host: str, max_concurrency: int = 10) -> GitLabClient:
-    """The client of a command that runs without the daemon: reads retried, more requests at once."""
-    return GitLabClient(host, max_concurrency=max_concurrency, retry_reads=RetryPolicy())
+    """The client of a command that runs without the daemon: reads retried, more requests at once, and the host's
+    capabilities kept on disk for the next run."""
+    return GitLabClient(
+        host,
+        max_concurrency=max_concurrency,
+        retry_reads=RetryPolicy(),
+        capabilities=DiskCapabilityStore(paths.cache_dir()),
+    )

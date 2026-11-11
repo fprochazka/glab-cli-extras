@@ -68,6 +68,18 @@ The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipel
 
 A code search belongs to no project, so each `glab-search-code` run gets a new dir of its own: `<base>/<host>/-/search/<UTC time>-<query>-<hash>/`. See [glab-search-code](#glab-search-code).
 
+### The capability cache
+
+GitLab Community Edition has no `MergeRequest.approvalsLeft`, and a query that asks for it fails as a whole. So before the first MR snapshot of a run, a command asks the host once for `metadata { version enterprise }` and leaves the field out on Community Edition. The answer is kept for a day in `<cache dir>/<host>/capabilities.json`, so this costs one extra request per host per day. The cache dir is:
+
+- `$GLAB_CLI_EXTRAS_CACHE_DIR` when it is set;
+- else `$XDG_CACHE_HOME/glab-cli-extras/`, by default `~/.cache/glab-cli-extras/`, on macOS too;
+- on Windows `%LOCALAPPDATA%\glab-cli-extras\cache\`.
+
+The file holds the GitLab version, the edition flag, the time of the check, and the `MergeRequest` fields GitLab rejected. If GitLab still rejects `approvalsLeft`, the command asks again without it and adds the field to the file. A probe that gets no answer (network failure, 5xx, 429, 401) is not written down; the command then asks for the field and relies on that rejection. GitLab before 15.6 has no edition flag and works the same way. A missing, broken or day-old file is ignored and written again. Several commands may write the file at once: each one replaces it whole, and the last one wins. To start over, delete the dir.
+
+GitLab's schema introspection (`__type`) cannot replace the probe: GitLab answers any introspection query with a static dump of its whole schema, 8 MB on gitlab.com.
+
 ## glab-watch
 
 `glab-watch` reports every change to a GitLab resource as a JSON event. A shared per-user daemon does the polling, so ten watchers cost about as much API budget as one.
@@ -225,7 +237,7 @@ glab-watch daemon stop        # running watchers start a new daemon on their nex
 - **Budget.** The daemon paces each host on GitLab's `RateLimit-Remaining` and `RateLimit-Reset` headers and uses at most half of what is left. A host without those headers gets 60 requests a minute. When the budget is short, every poll interval grows by the same factor. A 429 pauses the whole host for its `Retry-After`.
 - **Cheap probes.** Pipelines are polled through GitLab's GraphQL ETag cache: an unchanged pipeline answers with a 304 before any query runs. Base intervals: pipeline 5 s while running, MR 30 s (15 s on hosts with a high rate limit), branch pipelines 10 s, branch pushes 30 s, `mrs` 60 s.
 - **Sharing.** Watchers of the same resource share one poller. All watched branches of a project share one push-event request.
-- **No files.** The daemon writes no files. It fetches each log and each changed thread once, keeps it in memory for a while, and hands it to every watcher that asks, so ten watchers of one pipeline cost one download. The watchers write the files.
+- **No files.** The daemon writes no files. It fetches each log and each changed thread once, keeps it in memory for a while, and hands it to every watcher that asks, so ten watchers of one pipeline cost one download. The watchers write the files. The daemon keeps the [capabilities](#the-capability-cache) of each host in memory for a day instead of in the cache dir.
 
 ## glab-pipeline
 
