@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 BASE_DIR_ENV = "GLAB_CLI_EXTRAS_BASE_DIR"
 STATE_DIR_ENV = "GLAB_CLI_EXTRAS_STATE_DIR"
+CACHE_DIR_ENV = "GLAB_CLI_EXTRAS_CACHE_DIR"
 APP = "glab-cli-extras"
 
 
@@ -86,6 +87,22 @@ def daemon_state_dir() -> Path:
         if runtime and Path(runtime).is_dir():
             return Path(runtime) / APP
     return Path(tempfile.gettempdir()) / f"{APP}-{_uid_suffix()}"
+
+
+def cache_dir() -> Path:
+    """The per-user dir of what the commands remember about each GitLab host between runs.
+
+    `GLAB_CLI_EXTRAS_CACHE_DIR` wins. Else `$XDG_CACHE_HOME/glab-cli-extras` (default `~/.cache`, macOS included, as
+    for the config file), on Windows `%LOCALAPPDATA%\\glab-cli-extras\\cache`.
+    """
+    override = os.environ.get(CACHE_DIR_ENV)
+    if override:
+        return Path(override)
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / APP / "cache"
+    xdg = os.environ.get("XDG_CACHE_HOME", "")
+    # The XDG spec says to ignore a relative path.
+    return (Path(xdg) if xdg and Path(xdg).is_absolute() else Path.home() / ".cache") / APP
 
 
 def ensure_private_dir(path: Path) -> Path:

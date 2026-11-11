@@ -22,8 +22,7 @@ MAX_THREAD_PAGES = 10
 MAX_STATUS_PAGES = 5
 """The head commit's statuses include every job of every pipeline on it, 100 to a page."""
 APPROVALS_LEFT_MISSING = "Field 'approvalsLeft' doesn't exist"
-"""GitLab Free has no approval rules, so its schema has no `MergeRequest.approvalsLeft` and rejects the whole query."""
-_hosts_without_approvals_left: set[str] = set()
+"""GitLab CE has no approval rules, so its schema has no `MergeRequest.approvalsLeft` and rejects the whole query."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,15 +241,17 @@ async def fetch_snapshot(
 
 
 async def _query_snapshot(client: GitLabClient, variables: dict[str, str | int | bool]) -> GraphQLResult:
-    """The MR snapshot query. On a host whose schema has no `approvalsLeft` (GitLab Free), it is asked again without
-    the field, and that host is asked without it from then on; `approvals_left` stays None there."""
-    if client.host not in _hosts_without_approvals_left:
+    """The MR snapshot query, without `approvalsLeft` on a host whose schema lacks it (GitLab CE); `approvals_left`
+    stays None there. When the host's capabilities are unknown or wrong, GitLab's rejection of the field is the signal:
+    the query is asked again without it, and the field is recorded as missing for the next queries."""
+    capabilities = await client.capabilities()
+    if capabilities is None or capabilities.has_mr_field("approvalsLeft"):
         try:
             return await client.graphql(queries.load("mr"), variables, kind="mr")
         except ApiError as exc:
             if APPROVALS_LEFT_MISSING not in str(exc):
                 raise
-            _hosts_without_approvals_left.add(client.host)
+            client.record_missing_mr_field("approvalsLeft")
     return await client.graphql(_query_without_approvals_left(), variables, kind="mr")
 
 

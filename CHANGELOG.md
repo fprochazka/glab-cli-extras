@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Changed:
+
+- On GitLab Community Edition, the commands that take the MR snapshot ask for it without `approvalsLeft` on the first try. Since 0.7.2 every run of `glab-discussion read`, `glab-mr-status` and `glab-pipeline inspect --mr-url` first sent a query that GitLab rejected. The commands now ask each host for its version and edition once a day and keep the answer in `~/.cache/glab-cli-extras/<host>/capabilities.json` (`$XDG_CACHE_HOME`, `%LOCALAPPDATA%` on Windows, or `GLAB_CLI_EXTRAS_CACHE_DIR`). That is one extra request per host per day. The daemon keeps the answer in memory and still writes no files. If GitLab rejects the field anyway, or the check gets no answer, the query is asked again without the field, as in 0.7.2, and the cache records the field as missing. See [The capability cache](README.md#the-capability-cache).
+
 ## 0.7.2 (2026-11-11)
 
 Fixed:

@@ -126,8 +126,16 @@ def answer(
     return ProcessResult(1, b"", f"ERROR\n  no fake route for {target[:80]!r}\n".encode())
 
 
+CAPABILITY_PROBE = "GitLabCapabilities"
+EE_PROBE_ANSWER = {"data": {"metadata": {"version": "17.5.0", "enterprise": True}}}
+
+
 class FakeGlab:
-    """An in-process `GlabRunner`."""
+    """An in-process `GlabRunner`.
+
+    Without a route for it, the capability probe every client sends before its first MR snapshot gets the answer of
+    an EE host and stays out of `calls`, so that the tests that count requests count only the ones they are about.
+    """
 
     def __init__(self, routes: list[Route] | None = None, repo_view: Any = None) -> None:
         self.routes = list(routes or [])
@@ -135,6 +143,8 @@ class FakeGlab:
         self.calls: list[Call] = []
 
     async def __call__(self, args: Sequence[str], timeout: float, stdin: bytes | None = None) -> ProcessResult:
+        if stdin and CAPABILITY_PROBE.encode() in stdin and not any(r.match == CAPABILITY_PROBE for r in self.routes):
+            return ProcessResult(0, render(200, EE_PROBE_ANSWER, RATE_LIMIT_HEADERS), b"")
         self.calls.append(Call(list(args), stdin))
         return answer(self.routes, args, self.repo_view, stdin)
 

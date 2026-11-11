@@ -54,9 +54,12 @@ def ctx(fake: FakeGlab, clock: Clock, tmp_path: Path) -> PollContext:
 
 @pytest.fixture(autouse=True)
 def _isolated_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """No test may touch the real daemon, base dir or Claude session."""
+    """No test may touch the real daemon, base dir, cache dir or Claude session."""
     monkeypatch.setenv("GLAB_CLI_EXTRAS_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("GLAB_CLI_EXTRAS_BASE_DIR", str(tmp_path / "base"))
+    monkeypatch.setenv("GLAB_CLI_EXTRAS_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg-cache"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
     for name in ("CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID"):
         monkeypatch.delenv(name, raising=False)
     # No test may read the machine's config files or settings variables.

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import quote, urlencode
 
 from glab_cli_extras.gitlab.budget import NOT_MODIFIED_COST, HostBudget
+from glab_cli_extras.gitlab.capabilities import PROBE_QUERY, Capabilities, CapabilityStore, parse_probe
 from glab_cli_extras.gitlab.glab import (
     DEFAULT_TIMEOUT,
     GlabRunner,
@@ -99,16 +100,22 @@ class GitLabClient:
         timeout: float = DEFAULT_TIMEOUT,
         max_concurrency: int = MAX_CONCURRENT_REQUESTS,
         retry_reads: RetryPolicy | None = None,
+        capabilities: CapabilityStore | None = None,
     ) -> None:
         """`retry_reads` retries GETs and GraphQL queries, never a write: a write that timed out may still have been
-        applied by GitLab, and sending it again would post a comment or a review twice."""
+        applied by GitLab, and sending it again would post a comment or a review twice.
+
+        `capabilities` keeps what the host's schema offers; by default in memory only, which is what the daemon needs.
+        """
         self.host = host
+        self.capability_store = capabilities if capabilities is not None else CapabilityStore()
         self.budget = budget if budget is not None else HostBudget()
         self.stats = RequestStats()
         self._runner = runner
         self._clock = clock
         self._timeout = timeout
         self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._probe_lock = asyncio.Lock()
         self._retry = retry_reads
         self._version: tuple[int, int] | None = None
         self._version_checked = False
@@ -238,6 +245,42 @@ class GitLabClient:
         if response.status == 304:
             return GraphQLResult(True, None, etag or if_none_match)
         return GraphQLResult(False, _graphql_data(response), etag)
+
+    async def capabilities(self) -> Capabilities | None:
+        """What this host's schema offers, from the store or from one probe. None when the probe got no answer.
+
+        The probe is never retried: on a failure the caller asks for every field and handles the rejection.
+        """
+        # The daemon's first polls of several MRs on one host run at once; one probe answers them all.
+        async with self._probe_lock:
+            return await self._load_or_probe()
+
+    async def _load_or_probe(self) -> Capabilities | None:
+        now = self._clock()
+        store = self.capability_store
+        found = store.load(self.host, now)
+        if found is not None or not store.may_probe(self.host, now):
+            return found
+        args = build_api_args(self.host, "graphql", method="POST", json_body=True)
+        try:
+            response = await self._request(args, "capabilities", json_bytes({"query": PROBE_QUERY, "variables": {}}))
+            data = _graphql_data(response)
+        except ApiError as exc:
+            if type(exc) is not ApiError or exc.status is None or exc.status >= 500:
+                # No answer: a network failure, a 5xx, a 429, a 401 or 403. Try again later, never write it down.
+                store.probe_failed(self.host, now)
+                return None
+            # An answer: GitLab older than 15.6 has no `metadata.enterprise`. Every field is assumed to exist.
+            data = None
+        found = parse_probe(data, now)
+        store.save(self.host, found)
+        return found
+
+    def record_missing_mr_field(self, name: str) -> None:
+        """GitLab rejected `MergeRequest.<name>`: leave it out of the next queries until the capabilities expire."""
+        now = self._clock()
+        current = self.capability_store.load(self.host, now) or Capabilities(now)
+        self.capability_store.save(self.host, current.without_mr_field(name))
 
     async def version(self) -> tuple[int, int] | None:
         """The GitLab version (major, minor), fetched once per client. None when the server does not tell."""
