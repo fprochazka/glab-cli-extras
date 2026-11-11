@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 (2026-11-11)
 
 Fixed:
 
+- Under a Claude Code session on macOS, `glab-watch` sends its events to the session instead of to stdout. It needs cc-blackbox 0.5.1, which no longer treats every macOS session as not running when Claude Code writes `"pidDomain": "darwin"` into the session record.
 - `glab-watch` with `--events-stream=auto` says why it sends events to stdout also when `CLAUDE_CODE_MESSAGING_SOCKET` is set but no live session record was found. Before, it fell back to stdout without a `stream fallback:` line.
 
 ## 0.7.0 (2026-11-10)
