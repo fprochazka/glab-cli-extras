@@ -3,12 +3,13 @@ the head commit's external statuses."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from glab_cli_extras.discussion.models import UserInfo
 from glab_cli_extras.gitlab import queries
-from glab_cli_extras.gitlab.client import GitLabClient, NotFound, Unauthorized, encode_project
+from glab_cli_extras.gitlab.client import ApiError, GitLabClient, GraphQLResult, NotFound, Unauthorized, encode_project
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.gitlab.values import gid_to_int, lower
 from glab_cli_extras.serde import stable_hash
@@ -20,6 +21,9 @@ THREAD_LIST_THRESHOLD = 3
 MAX_THREAD_PAGES = 10
 MAX_STATUS_PAGES = 5
 """The head commit's statuses include every job of every pipeline on it, 100 to a page."""
+APPROVALS_LEFT_MISSING = "Field 'approvalsLeft' doesn't exist"
+"""GitLab Free has no approval rules, so its schema has no `MergeRequest.approvalsLeft` and rejects the whole query."""
+_hosts_without_approvals_left: set[str] = set()
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,7 +222,7 @@ async def fetch_snapshot(
         "withThreads": with_threads,
         "withPipeline": with_pipeline,
     }
-    result = await client.graphql(queries.load("mr"), variables, kind="mr")
+    result = await _query_snapshot(client, variables)
     node = ((result.data or {}).get("project") or {}).get("mergeRequest")
     if not node:
         raise NotFound(f"merge request !{ref.id} not found in {ref.project}", 404)
@@ -229,12 +233,32 @@ async def fetch_snapshot(
         pages = 1
         while (connection.get("pageInfo") or {}).get("hasNextPage") and pages < MAX_THREAD_PAGES:
             variables["threadsAfter"] = str(connection["pageInfo"]["endCursor"])
-            more = await client.graphql(queries.load("mr"), variables, kind="mr")
+            more = await _query_snapshot(client, variables)
             connection = ((((more.data or {}).get("project") or {}).get("mergeRequest") or {}).get("discussions")) or {}
             nodes.extend(connection.get("nodes") or [])
             pages += 1
         threads = parse_threads(nodes)
     return parse_mr(node, ref.project, threads)
+
+
+async def _query_snapshot(client: GitLabClient, variables: dict[str, str | int | bool]) -> GraphQLResult:
+    """The MR snapshot query. On a host whose schema has no `approvalsLeft` (GitLab Free), it is asked again without
+    the field, and that host is asked without it from then on; `approvals_left` stays None there."""
+    if client.host not in _hosts_without_approvals_left:
+        try:
+            return await client.graphql(queries.load("mr"), variables, kind="mr")
+        except ApiError as exc:
+            if APPROVALS_LEFT_MISSING not in str(exc):
+                raise
+            _hosts_without_approvals_left.add(client.host)
+    return await client.graphql(_query_without_approvals_left(), variables, kind="mr")
+
+
+def _query_without_approvals_left() -> str:
+    query, removed = re.subn(r"^[ \t]*approvalsLeft[ \t]*\n", "", queries.load("mr"), flags=re.MULTILINE)
+    if removed != 1:
+        raise RuntimeError("mr.graphql must select approvalsLeft on a line of its own")
+    return query
 
 
 async def fetch_discussions(client: GitLabClient, ref: ResourceRef, ids: set[str] | None) -> dict[str, Any]:

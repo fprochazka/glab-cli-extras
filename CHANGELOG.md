@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Fixed:
+
+- `glab-discussion read`, `glab-watch mr` and the other commands that take the MR snapshot work on GitLab instances whose GraphQL schema has no `MergeRequest.approvalsLeft`, such as GitLab Free. They failed with `GraphQL error: Field 'approvalsLeft' doesn't exist on type 'MergeRequest'`. The snapshot is now asked again without the field, and that host is asked without it from then on; the approvals left are unknown there.
+
 ## 0.7.1 (2026-11-11)
 
 Fixed:
