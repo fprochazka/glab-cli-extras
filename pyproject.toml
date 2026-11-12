@@ -1,6 +1,6 @@
 [project]
 name = "glab-cli-extras"
-version = "0.8.0"
+version = "0.9.0"
 description = "Extra commands for the GitLab CLI (glab): glab-watch reports changes to merge requests, pipelines and branches, glab-pipeline inspects a pipeline, glab-discussion reads and writes merge request discussions, and glab-search-code downloads every file a GitLab code search matched."
 readme = "README.md"
 license = "MIT"

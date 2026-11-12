@@ -8,7 +8,7 @@
     {
       "name": "glab",
       "description": "GitLab through the glab CLI and glab-cli-extras: watch MRs and pipelines, read MR status, inspect pipelines, read and write discussions, search code",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "author": {
         "name": "Filip Procházka",
         "url": "https://github.com/fprochazka"
