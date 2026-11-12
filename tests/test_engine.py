@@ -138,7 +138,12 @@ def test_leases_expire_and_the_engine_goes_idle(clock: Clock, tmp_path: Path) ->
 
 
 def test_not_found_ends_the_watch_and_rate_limits_degrade_once(clock: Clock, tmp_path: Path) -> None:
-    fake = FakeGlab([Route("PipelineTree", {"data": {"project": {"pipeline": None}}})])
+    fake = FakeGlab(
+        [
+            Route("PipelineTree", {"data": {"project": {"pipeline": None}}}),
+            Route("pipelines/5001", {"message": "404 Not found"}, status=404),
+        ]
+    )
     engine = make_engine(fake, clock, tmp_path)
 
     async def scenario() -> None:

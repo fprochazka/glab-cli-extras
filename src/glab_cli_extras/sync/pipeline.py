@@ -3,6 +3,10 @@
 The query sends `X-GITLAB-GRAPHQL-RESOURCE-ETAG: pipelines/id/<id>` and `If-None-Match`. GitLab answers an unchanged
 pipeline with a 304 from its cache before running the query, and touches the key on every job transition of the
 pipeline and its downstream pipelines. So one request is both the probe and the fetch.
+
+GitLab's lookup by ID leaves out child pipelines (the ones a `trigger:` job starts in the same project), while the
+lookup by IID finds them. So when the query by ID answers no pipeline, the IID comes from the REST endpoint, which sees
+child pipelines too, and the tree is fetched by IID. The caller keeps that IID and passes it to later fetches.
 """
 
 from __future__ import annotations
@@ -11,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from glab_cli_extras.gitlab import queries
-from glab_cli_extras.gitlab.client import GitLabClient, NotFound
+from glab_cli_extras.gitlab.client import GitLabClient, NotFound, encode_project
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.gitlab.values import gid_to_int, lower
 
@@ -126,20 +130,59 @@ class TreeResult:
     not_modified: bool
     snapshot: PipelineSnapshot | None
     etag: str | None
+    lookup_iid: int | None = None
+    """The IID the tree was fetched by, when the lookup by ID cannot see the pipeline. Pass it to the next fetch."""
 
 
 async def fetch_tree(
-    client: GitLabClient, ref: ResourceRef, if_none_match: str | None, *, use_etag: bool = True
+    client: GitLabClient,
+    ref: ResourceRef,
+    if_none_match: str | None,
+    *,
+    use_etag: bool = True,
+    lookup_iid: int | None = None,
 ) -> TreeResult:
-    """Fetch the pipeline tree. With `use_etag`, an unchanged pipeline answers 304 and the result has no snapshot."""
+    """Fetch the pipeline tree. With `use_etag`, an unchanged pipeline answers 304 and the result has no snapshot.
+
+    Without `lookup_iid` the tree is fetched by ID, and a pipeline the lookup by ID cannot see costs one REST request
+    for its IID and a second query by that IID. A pipeline REST does not find either raises NotFound.
+    """
     assert ref.id is not None
+    etag_resource = f"pipelines/id/{ref.id}" if use_etag else None
+    if lookup_iid is None:
+        result = await client.graphql(
+            queries.load("pipeline", "pipeline_fragments"),
+            {"project": ref.project, "id": f"gid://gitlab/Ci::Pipeline/{ref.id}"},
+            etag_resource=etag_resource,
+            if_none_match=if_none_match,
+            kind="pipeline",
+        )
+        if result.not_modified:
+            return TreeResult(True, None, result.etag)
+        if ((result.data or {}).get("project") or {}).get("pipeline"):
+            return TreeResult(False, parse_pipeline(result.data, ref.host, ref.project), result.etag)
+        lookup_iid = await _pipeline_iid(client, ref)
+        # The query by ID just ran, so a conditional request could only answer 304 with no tree to return.
+        if_none_match = None
     result = await client.graphql(
-        queries.load("pipeline"),
-        {"project": ref.project, "id": f"gid://gitlab/Ci::Pipeline/{ref.id}"},
-        etag_resource=f"pipelines/id/{ref.id}" if use_etag else None,
+        queries.load("pipeline_by_iid", "pipeline_fragments"),
+        {"project": ref.project, "iid": str(lookup_iid)},
+        etag_resource=etag_resource,
         if_none_match=if_none_match,
         kind="pipeline",
     )
     if result.not_modified:
-        return TreeResult(True, None, result.etag)
-    return TreeResult(False, parse_pipeline(result.data, ref.host, ref.project), result.etag)
+        return TreeResult(True, None, result.etag, lookup_iid)
+    return TreeResult(False, parse_pipeline(result.data, ref.host, ref.project), result.etag, lookup_iid)
+
+
+async def _pipeline_iid(client: GitLabClient, ref: ResourceRef) -> int:
+    """The IID of the pipeline from REST, which finds child pipelines. Raises NotFound when it does not exist."""
+    try:
+        data = await client.get_json(f"projects/{encode_project(ref.project)}/pipelines/{ref.id}", kind="pipeline_iid")
+    except NotFound as exc:
+        raise NotFound(f"pipeline not found in {ref.project}", 404) from exc
+    iid = data.get("iid") if isinstance(data, dict) else None
+    if not isinstance(iid, int):
+        raise NotFound(f"pipeline not found in {ref.project}", 404)
+    return iid

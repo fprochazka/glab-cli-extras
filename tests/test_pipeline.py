@@ -4,13 +4,17 @@ import asyncio
 from collections.abc import Sequence
 from pathlib import Path
 
+import pytest
+
 from conftest import Clock
 from fakeglab import FakeGlab, Route
 from glab_cli_extras.events import KINDS_BY_RESOURCE, RawEvent
+from glab_cli_extras.gitlab.client import GitLabClient, NotFound
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.resources.base import PollContext, PollerOptions
 from glab_cli_extras.resources.pipeline import PipelinePoller, diff_pipeline, log_cache_key, parse_pipeline
 from glab_cli_extras.sync.job_logs import TAIL_BYTES
+from glab_cli_extras.sync.pipeline import fetch_tree
 from shapes import HOST, PROJECT, gql_downstream, gql_job, gql_pipeline
 
 REF = ResourceRef("pipeline", HOST, PROJECT, 5001)
@@ -65,8 +69,6 @@ def test_retried_job_is_a_new_job() -> None:
 
 
 def _poller(fake: FakeGlab, clock: Clock, tmp_path: Path, options: PollerOptions = ALL) -> PipelinePoller:
-    from glab_cli_extras.gitlab.client import GitLabClient
-
     ctx = PollContext(GitLabClient(HOST, runner=fake, clock=clock), clock)
     return PipelinePoller(REF, ctx, options)
 
@@ -166,3 +168,54 @@ def test_finished_pipeline_at_start_ends_at_once(clock: Clock, tmp_path: Path) -
     assert asyncio.run(poller.poll()) == []
     assert poller.terminal
     assert poller.summary()["jobs"] == {"success": 1}
+    assert len(fake.calls) == 1
+
+
+NO_PIPELINE = {"data": {"project": {"pipeline": None}}}
+
+
+def test_child_pipeline_is_fetched_by_iid_and_later_polls_skip_the_lookup_by_id(clock: Clock, tmp_path: Path) -> None:
+    # GitLab's lookup by ID leaves out child pipelines, the one by IID finds them, and REST knows the IID.
+    child = gql_pipeline(5001, "running", [gql_job(1, "test", "running")])
+    fake = FakeGlab(
+        [
+            Route("PipelineTreeByIid", {"data": child}, etag='W/"v1"'),
+            Route("PipelineTree", NO_PIPELINE, etag='W/"v0"'),
+            Route(
+                f"projects/group%2Fproject/pipelines/{REF.id}", {"id": REF.id, "iid": 77, "source": "parent_pipeline"}
+            ),
+        ]
+    )
+    poller = _poller(fake, clock, tmp_path)
+    assert asyncio.run(poller.poll()) == []
+    assert poller.snapshot is not None and poller.snapshot.id == 5001 and poller.snapshot.iid == 77
+    by_id, rest, by_iid = fake.calls
+    assert by_id.variables == {"project": PROJECT, "id": "gid://gitlab/Ci::Pipeline/5001"}
+    assert rest.endpoint == "projects/group%2Fproject/pipelines/5001"
+    assert by_iid.variables == {"project": PROJECT, "iid": "77"}
+    assert "If-None-Match" not in by_iid.headers
+    assert by_iid.headers["X-GITLAB-GRAPHQL-RESOURCE-ETAG"] == "/api/graphql:pipelines/id/5001"
+
+    asyncio.run(poller.poll())
+    assert len(fake.calls) == 4
+    assert fake.calls[-1].variables == {"project": PROJECT, "iid": "77"}
+    assert fake.calls[-1].headers["If-None-Match"] == 'W/"v1"'
+
+    fake.routes[0] = Route(
+        "PipelineTreeByIid", {"data": gql_pipeline(5001, "failed", [gql_job(1, "test", "failed")])}, etag='W/"v2"'
+    )
+    assert kinds(asyncio.run(poller.poll())) == ["status_changed", "finished"]
+    assert len(fake.calls) == 5
+
+
+def test_a_pipeline_rest_does_not_find_either_is_not_found(clock: Clock, tmp_path: Path) -> None:
+    fake = FakeGlab(
+        [
+            Route("PipelineTree", NO_PIPELINE),
+            Route(f"projects/group%2Fproject/pipelines/{REF.id}", {"message": "404 Not found"}, status=404),
+        ]
+    )
+    client = GitLabClient(HOST, runner=fake, clock=clock)
+    with pytest.raises(NotFound, match=f"pipeline not found in {PROJECT}"):
+        asyncio.run(fetch_tree(client, REF, None))
+    assert [c.endpoint for c in fake.calls] == ["graphql", "projects/group%2Fproject/pipelines/5001"]

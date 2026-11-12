@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Fixed:
+
+- `glab-watch pipeline` and `glab-pipeline inspect --pipeline-url` find child pipelines, the ones a `trigger:` job starts in the same project. Before, both said the pipeline was not found, and `glab-watch` ended with `not_found`. GitLab's GraphQL lookup by pipeline ID leaves child pipelines out, so when it answers no pipeline, the IID now comes from `GET /projects/:id/pipelines/:pipeline_id` and the tree is fetched by IID. That costs two more requests on the first poll of a child pipeline; later polls of the watch ask by IID directly. Other pipelines cost no extra request.
+
 ## 0.9.0 (2026-11-12)
 
 Added:

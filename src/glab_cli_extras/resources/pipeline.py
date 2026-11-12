@@ -119,6 +119,8 @@ class _PendingLog:
 class _EtagState:
     etag: str | None = None
     supported: bool = True
+    lookup_iid: int | None = None
+    """Set for a child pipeline, which GitLab finds only by IID."""
     pending_logs: dict[int, _PendingLog] = field(default_factory=dict)
 
 
@@ -141,7 +143,10 @@ class PipelinePoller(Poller[PipelineSnapshot]):
     async def _fetch(self) -> PipelineSnapshot | None:
         assert self.ref.id is not None
         etag = self._state.etag if self._state.supported else None
-        result = await fetch_tree(self.ctx.client, self.ref, etag, use_etag=self._state.supported)
+        result = await fetch_tree(
+            self.ctx.client, self.ref, etag, use_etag=self._state.supported, lookup_iid=self._state.lookup_iid
+        )
+        self._state.lookup_iid = result.lookup_iid
         if result.not_modified:
             return None
         if self._state.supported and not result.etag:

@@ -1,0 +1,34 @@
+fragment WatchedPipeline on Pipeline {
+  id
+  iid
+  status
+  ref
+  sha
+  path
+  jobs(first: 100, retried: false) {
+    nodes { ...WatchedJob }
+  }
+  downstream {
+    nodes {
+      id
+      iid
+      status
+      path
+      project { fullPath }
+      jobs(first: 100, retried: false) {
+        nodes { ...WatchedJob }
+      }
+    }
+  }
+}
+
+fragment WatchedJob on CiJob {
+  id
+  name
+  status
+  stage { name }
+  allowFailure
+  startedAt
+  finishedAt
+  artifacts { nodes { fileType size } }
+}

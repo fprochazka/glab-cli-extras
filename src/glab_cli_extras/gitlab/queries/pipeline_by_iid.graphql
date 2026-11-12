@@ -1,0 +1,5 @@
+query PipelineTreeByIid($project: ID!, $iid: ID!) {
+  project(fullPath: $project) {
+    pipeline(iid: $iid) { ...WatchedPipeline }
+  }
+}
