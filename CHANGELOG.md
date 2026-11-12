@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Changed:
+
+- `glab-discussion write --attach <file>` takes any file, not only PNG, JPEG, GIF and WebP images, and adds the Markdown GitLab returns for it. Images, video, audio and SVG render inline; any other file, such as a log, is a download link. The command checks only that the file exists and can be read. When GitLab refuses a file over the instance's maximum attachment size, the error says so and nothing is posted.
+
 ## 0.8.0 (2026-11-11)
 
 Changed:

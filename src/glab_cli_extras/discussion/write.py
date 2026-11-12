@@ -6,7 +6,7 @@ import sys
 from typing import Any
 
 from glab_cli_extras.config import DRAFTS
-from glab_cli_extras.discussion.attach import add_images, check_images, upload_images
+from glab_cli_extras.discussion.attach import add_links, check_files, upload_files
 from glab_cli_extras.discussion.checks import (
     CheckError,
     UsageError,
@@ -164,11 +164,11 @@ def run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    # 2. Read the body, and check the images before any request
+    # 2. Read the body, and check the attached files before any request
     body = sys.stdin.read() if args.body == "-" else args.body
     require_body(body)
     refuse_quick_actions(body, settings_of(args))
-    images = check_images(getattr(args, "attach", None) or [])
+    attached = check_files(getattr(args, "attach", None) or [])
 
     # 3. Resolve MR context, the full id of the discussion a reply goes to, and the position of a diff note
     ctx = resolve_mr_context(args)
@@ -176,9 +176,9 @@ def run(args: argparse.Namespace) -> None:
         args.reply_to = full_discussion_id(ctx, args.reply_to)
     position = _diff_position(ctx, args) if args.file else None
 
-    # 4. Upload the images: last, so that a refused option or line leaves no upload behind
-    if images:
-        body = add_images(body, upload_images(ctx, images))
+    # 4. Upload the files: last, so that a refused option or line leaves no upload behind
+    if attached:
+        body = add_links(body, upload_files(ctx, attached))
 
     # 5. Determine mode and execute
     if plain_note:

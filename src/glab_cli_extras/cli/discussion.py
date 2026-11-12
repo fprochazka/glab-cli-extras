@@ -70,9 +70,9 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     write_parser.add_argument(
         "--attach",
         action="append",
-        metavar="IMAGE",
-        help="Upload a PNG, JPEG, GIF or WebP image to the project and show it after the body text."
-        " Repeat for more images",
+        metavar="FILE",
+        help="Upload a file to the project and link it after the body text; images, video and audio show inline."
+        " Repeat for more files",
     )
     write_parser.add_argument("--file", help="File path for a diff note")
     write_parser.add_argument("--new-line", type=int, help="New-side line number for diff note")
