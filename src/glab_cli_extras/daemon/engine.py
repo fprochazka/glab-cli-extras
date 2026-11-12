@@ -479,6 +479,8 @@ class Engine:
         host = res.ref.host
         client = self.client_for(host)
         delay: float | None = None
+        # Without a seed, the first successful poll is the baseline: a target that is terminal then had already ended.
+        baseline = res.poller.snapshot is None
         try:
             raws = await res.poller.poll()
         except NotFound as exc:
@@ -515,7 +517,10 @@ class Engine:
                         sub.private.append(self._started_event(res))
                         sub.started = True
             if res.poller.terminal:
-                self._end(res, res.poller.terminal_reason or "finished", res.poller.terminal_data)
+                data = dict(res.poller.terminal_data)
+                if first and baseline:
+                    data["already_ended"] = True
+                self._end(res, res.poller.terminal_reason or "finished", data)
             else:
                 self._reconcile_children(res)
                 now = self.clock()

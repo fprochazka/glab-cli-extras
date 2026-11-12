@@ -8,7 +8,7 @@ Every event has `kind`, `resource`, `seq`, `observed_at` and `data`, and `artifa
 |------|------|-------|
 | `watch_started` | `summary`: the current state | Read the summary as the starting point. Changes before it are not events. |
 | `watch_degraded` | `reason`, `message` | `auth`: tell the user to run `glab auth status`. `rate_limited`: nothing to do, polling slows down. `not_found`: check the ref. `error`: report the message. `daemon_mismatch`: run `glab-watch daemon stop`; the watchers start a current daemon. Each reason comes once, not per failed poll. |
-| `watch_ended` | `reason`: `merged`, `closed`, `finished`, `not_found`, `until`, `timeout`, `idle`, `session_gone`, or the signal | The watcher has exited. The skill says when to start it again. |
+| `watch_ended` | `reason`: `merged`, `closed`, `finished`, `not_found`, `until`, `timeout`, `idle`, `session_gone`, or the signal; `already_ended: true` when the MR or the pipeline had already ended when the watch started | The watcher has exited. The skill says when to start it again. With `already_ended`, nothing happened while watching: the end is the state the target was already in. |
 
 ## `glab-watch mr`
 

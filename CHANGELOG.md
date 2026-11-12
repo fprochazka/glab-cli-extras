@@ -6,6 +6,10 @@ Fixed:
 
 - `glab-watch pipeline` and `glab-pipeline inspect --pipeline-url` find child pipelines, the ones a `trigger:` job starts in the same project. Before, both said the pipeline was not found, and `glab-watch` ended with `not_found`. GitLab's GraphQL lookup by pipeline ID leaves child pipelines out, so when it answers no pipeline, the IID now comes from `GET /projects/:id/pipelines/:pipeline_id` and the tree is fetched by IID. That costs two more requests on the first poll of a child pipeline; later polls of the watch ask by IID directly. Other pipelines cost no extra request.
 
+Changed:
+
+- When the MR or the pipeline had already ended when `glab-watch` started, its `watch_ended` event has `already_ended: true`, and the status line on stderr says so, for example `ended: finished (already finished when the watch started)` or `ended: merged (already merged when the watch started)`. The exit code stays 0. A watch whose earlier snapshot saw the target still open or running, such as one that subscribed again after a daemon restart, has no such flag.
+
 ## 0.9.0 (2026-11-12)
 
 Added:

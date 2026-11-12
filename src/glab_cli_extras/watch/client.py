@@ -376,7 +376,8 @@ class Watcher:
                 self._deliver(events)
                 if ended is not None:
                     reason = str(ended.data.get("reason"))
-                    self.status.line(f"ended: {reason}")
+                    already = f" (already {reason} when the watch started)" if ended.data.get("already_ended") else ""
+                    self.status.line(f"ended: {reason}{already}")
                     return EXIT_ERROR if reason == "not_found" else EXIT_OK
                 if hit is not None:
                     self._finish(self._end_event("until", event=hit.kind, seq=hit.seq))

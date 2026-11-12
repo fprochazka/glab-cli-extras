@@ -9,6 +9,8 @@ from fakeglab import FakeGlab, Route
 from glab_cli_extras.daemon.engine import Engine
 from glab_cli_extras.events import KINDS_BY_RESOURCE
 from glab_cli_extras.gitlab.refs import ResourceRef
+from glab_cli_extras.serde import to_jsonable
+from glab_cli_extras.sync.pipeline import parse_pipeline
 from shapes import HOST, PROJECT, gql_job, gql_mr, gql_pipeline
 
 PIPELINE = ResourceRef("pipeline", HOST, PROJECT, 5001)
@@ -60,6 +62,8 @@ def test_two_subscribers_share_one_poller_and_get_their_own_filter(clock: Clock,
             "finished",
             "watch_ended",
         ]
+        # It ended while watched, so it is not marked as ended before the watch started.
+        assert events_of(poll_a, a["subscription_id"])[-1]["data"] == {"reason": "finished", "status": "success"}
         assert sum(1 for c in fake.calls if c.endpoint == "graphql") == 2
 
     asyncio.run(scenario())
@@ -185,6 +189,31 @@ def test_seeded_baseline_reports_what_changed_while_the_daemon_was_down(clock: C
         await second.poll_due_once()
         events = events_of(second.poll("client-a", {sub2["subscription_id"]: 0}), sub2["subscription_id"])
         assert [e["kind"] for e in events] == ["watch_started", "job_finished"]
+
+    asyncio.run(scenario())
+
+
+def test_end_on_the_first_poll_is_already_ended_unless_a_seed_saw_the_target_running(
+    clock: Clock, tmp_path: Path
+) -> None:
+    fake = FakeGlab([pipeline_route("success", gql_job(1, "test", "success"))])
+    engine = make_engine(fake, clock, tmp_path)
+    running = parse_pipeline(gql_pipeline(5001, "running", [gql_job(1, "test", "running")]), HOST, PROJECT)
+
+    async def scenario() -> None:
+        sub = engine.subscribe("client-a", PIPELINE, ALL_PIPELINE, "none")
+        await engine.poll_due_once()
+        events = events_of(engine.poll("client-a", {sub["subscription_id"]: 0}), sub["subscription_id"])
+        assert [e["kind"] for e in events] == ["watch_started", "watch_ended"]
+        assert events[-1]["data"] == {"reason": "finished", "status": "success", "already_ended": True}
+
+        # The pipeline finished while the daemon was down: it ended during the watch.
+        other = make_engine(fake, clock, tmp_path)
+        sub = other.subscribe("client-a", PIPELINE, ALL_PIPELINE, "none", baseline=to_jsonable(running))
+        await other.poll_due_once()
+        events = events_of(other.poll("client-a", {sub["subscription_id"]: 0}), sub["subscription_id"])
+        assert events[-1]["kind"] == "watch_ended"
+        assert events[-1]["data"] == {"reason": "finished", "status": "success"}
 
     asyncio.run(scenario())
 

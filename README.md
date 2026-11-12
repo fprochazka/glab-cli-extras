@@ -156,7 +156,7 @@ Lifecycle events come with every resource and cannot be filtered out:
 
 - `watch_started`: the current state, in `data.summary`.
 - `watch_degraded`: polling has trouble: `rate_limited`, `auth`, `not_found` or `error`, with a message. It is sent once per kind of trouble, not on every failed poll. The reason `daemon_mismatch` means the running daemon does not know a request this `glab-watch` sends, because it was started from other code of the same protocol version (an editable install that changed since). The watch keeps reporting events, but the files that need the daemon (job logs, thread files, the pipeline dump) stay out of date until you run `glab-watch daemon stop`; the running watchers then start a current daemon and subscribe again.
-- `watch_ended`: with a `reason`: `merged`, `closed`, `finished`, `not_found`, `until`, `timeout`, `idle`, `session_gone`, or the signal.
+- `watch_ended`: with a `reason`: `merged`, `closed`, `finished`, `not_found`, `until`, `timeout`, `idle`, `session_gone`, or the signal. When the MR or the pipeline had already ended when the watch started, `data.already_ended` is `true` and the status line on stderr says so, for example `ended: finished (already finished when the watch started)`. The exit code is 0.
 
 `mr`:
 

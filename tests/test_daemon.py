@@ -213,8 +213,9 @@ def test_watch_command_streams_jsonl_and_header_goes_to_stderr(daemon_env: Daemo
     assert watch.returncode == 0, err
     lines = out.splitlines()
     assert [json.loads(line)["kind"] for line in lines] == ["watch_started", "watch_ended"]
-    assert json.loads(lines[1])["data"] == {"reason": "finished", "status": "success"}
+    assert json.loads(lines[1])["data"] == {"reason": "finished", "status": "success", "already_ended": True}
     header = [line for line in err.splitlines() if line.startswith("glab-watch: ")]
+    assert "glab-watch: ended: finished (already finished when the watch started)" in header
     assert header[0] == f"glab-watch: resource: pipeline {HOST}/{PROJECT}!5001"
     assert any(line.startswith("glab-watch: ignored: (none)") for line in header)
     assert any(line.startswith("glab-watch: restart with: glab-watch pipeline ") for line in header)
