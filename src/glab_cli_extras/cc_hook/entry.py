@@ -48,9 +48,12 @@ RULE_SETS: tuple[RuleSet, ...] = (
     RuleSet(
         "pipeline",
         "Direct `glab` pipeline inspection is blocked (matched: `glab ci view|get|trace`, or raw"
-        " `glab api projects/.../pipelines|jobs/.../trace|ci/lint`). Use `glab-pipeline inspect` instead: it dumps the"
-        " full pipeline state (pipeline.json, jobs.json, per-job logs, lint, test report, downstream) and prints a"
-        " problem-driven summary. To wait for a pipeline, run `glab-watch pipeline` in the background. Install with"
+        " `glab api projects/.../pipelines|jobs/.../trace`, or a GET of `projects/.../ci/lint`). Use"
+        " `glab-pipeline inspect` instead: it dumps the full pipeline state (pipeline.json, jobs.json, per-job logs,"
+        " lint, test report, downstream) and prints a problem-driven summary; `--with-merged-ci-config` adds a ref's"
+        " lint result. Linting a file stays allowed: `glab ci lint <file>`, or POSTing its content to"
+        " `projects/.../ci/lint` with `glab api -X POST`, `--input` or `-f content=...`. To wait for a pipeline, run"
+        " `glab-watch pipeline` in the background. Install with"
         " `uv tool install glab-cli-extras`. Load the `glab:glab-pipeline` skill for usage.",
         tuple(
             re.compile(p, re.MULTILINE)
@@ -58,7 +61,9 @@ RULE_SETS: tuple[RuleSet, ...] = (
                 r"glab[ \t]+ci[ \t]+(view|get|trace)\b",
                 r"glab[ \t]+api\b[^|;&\n]*projects/\S+/pipelines/",
                 r"glab[ \t]+api\b[^|;&\n]*projects/\S+/jobs/\S+/trace",
-                r"glab[ \t]+api\b[^|;&\n]*projects/\S+/ci/lint",
+                # The ci-lint-api rule's except_option: a segment that names a method or a field sends content.
+                r"glab[ \t]+api\b(?![^|;&\n]*[ \t](-X|--method|--input|-f|-F|--field|--raw-field)([ \t=]|$))"
+                r"[^|;&\n]*projects/\S+/ci/lint",
             )
         ),
     ),

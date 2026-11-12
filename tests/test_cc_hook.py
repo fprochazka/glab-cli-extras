@@ -35,8 +35,8 @@ PIPELINE_ROWS = [
     (BLOCK, "glab api projects/42/pipelines/1000 --hostname gitlab.example.com"),
     (BLOCK, 'glab api "projects/group%2Fproject/jobs/2000/trace" > /tmp/work/job.log'),
     (BLOCK, 'glab api "projects/42/jobs/2000/trace" 2>/dev/null | grep -i "test-env"'),
-    (BLOCK, "glab api -X POST projects/group%2Fproject/ci/lint --input lint-payload.json"),
-    (BLOCK, 'glab api --method POST projects/:id/ci/lint --field "content=x"'),
+    (BLOCK, 'glab api "projects/:id/ci/lint?ref=feature/branch&dry_run=true"'),
+    (BLOCK, "glab api projects/group%2Fproject/ci/lint --hostname gitlab.example.com | jq .valid"),
     (BLOCK, "sudo glab ci trace 2000"),
     (BLOCK, 'timeout 60 glab api "projects/:id/pipelines/1000/jobs"'),
     (BLOCK, 'bash -c "glab ci get -F json"'),
@@ -49,6 +49,12 @@ PIPELINE_ROWS = [
     (ALLOW, "glab ci status --compact"),
     (ALLOW, "glab ci status --pipeline-id 1000"),
     (ALLOW, "glab ci lint .gitlab-ci.yml 2>&1 | tail -5"),
+    (ALLOW, "glab api -X POST projects/group%2Fproject/ci/lint --input lint-payload.json"),
+    (ALLOW, 'glab api --method POST projects/:id/ci/lint --field "content=x"'),
+    (ALLOW, "glab api --method=POST projects/:id/ci/lint --input lint-payload.json"),
+    (ALLOW, "glab api projects/:id/ci/lint --input lint-payload.json"),
+    (ALLOW, 'glab api projects/:id/ci/lint -f content="$(cat .gitlab-ci.yml)"'),
+    (ALLOW, "glab api projects/:id/ci/lint -F dry_run=true --raw-field content=x"),
     (ALLOW, 'glab api "projects/:id/pipelines?ref=feature/branch&per_page=1" | jq'),
     (ALLOW, "glab api 'projects/alice%2Fproject-test/pipelines?ref=master&per_page=1'"),
     (ALLOW, 'glab api "projects/group%2Fproject/merge_requests/123/pipelines"'),
@@ -247,7 +253,7 @@ def test_every_case_file_of_both_suites_is_here() -> None:
     assert counts == {
         ("discussion", "allow"): 9,
         ("discussion", "block"): 6,
-        ("pipeline", "allow"): 5,
+        ("pipeline", "allow"): 7,
         ("pipeline", "block"): 10,
     }
 

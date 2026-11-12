@@ -28,6 +28,10 @@ rules:
     command: [glab, api]
     any_arg_matches: 'projects/\S+/jobs/\S+/trace'
 
+  # Reading a project's lint result for a ref is what `glab-pipeline inspect --with-merged-ci-config` covers.
+  # Linting content the agent sends (a method or a field) is allowed: no other command does that for a file
+  # with includes resolved against the project. An explicit `-X GET` slips through too; the rule names options only.
   - name: ci-lint-api
     command: [glab, api]
     any_arg_matches: 'projects/\S+/ci/lint'
+    except_option: [-X, --method, --input, -f, -F, --field, --raw-field]

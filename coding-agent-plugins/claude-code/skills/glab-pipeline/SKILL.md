@@ -11,7 +11,7 @@ description: >-
 
 `glab-pipeline inspect` dumps a GitLab CI pipeline into files (the pipeline, every job, the logs of the failed jobs, and the lint, test report and downstream details when they apply) and prints a problem-driven summary. It comes with glab-cli-extras (`uv tool install glab-cli-extras`).
 
-Use it instead of `glab ci view`, `glab ci get`, `glab ci trace` and raw `glab api …/pipelines/…`, `…/jobs/…/trace` or `…/ci/lint` calls. The plugin's Bash guard denies those. Actions stay with `glab ci` (see the end).
+Use it instead of `glab ci view`, `glab ci get`, `glab ci trace` and raw `glab api …/pipelines/…`, `…/jobs/…/trace` calls, and a GET of `…/ci/lint` for a ref. The plugin's Bash guard denies those. Linting content you send stays allowed: `glab ci lint <file>`, or POSTing it to `…/ci/lint`. Actions stay with `glab ci` (see the end).
 
 ## Running it
 

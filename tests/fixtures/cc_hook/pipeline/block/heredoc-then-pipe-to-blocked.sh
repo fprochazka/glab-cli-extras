@@ -1,3 +1,3 @@
-cat <<'EOF' | glab api -X POST projects/group%2Fproject/ci/lint --input -
-{"content": "stages:\n  - build\n", "include_merged_yaml": true}
+cat <<'EOF' | xargs -I{} glab api "projects/group%2Fproject/jobs/{}/trace"
+2000
 EOF
