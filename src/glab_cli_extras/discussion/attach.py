@@ -35,8 +35,11 @@ def check_files(files: list[str]) -> list[Path]:
     return paths
 
 
-def upload_files(ctx: MrContext, paths: list[Path]) -> list[str]:
-    """Upload each file to the MR's project and return its Markdown, in the order given."""
+def upload_files(ctx: MrContext, paths: list[Path], outcome: str = "posted") -> list[str]:
+    """Upload each file to the MR's project and return its Markdown, in the order given.
+
+    `outcome` is what did not happen to the comment when an upload fails: "posted", or "edited" for `edit`.
+    """
     links: list[str] = []
     for path in paths:
         try:
@@ -44,10 +47,12 @@ def upload_files(ctx: MrContext, paths: list[Path]) -> list[str]:
         except GlabApiError as exc:
             done = f" The {len(links)} files uploaded before it stay in the project." if links else ""
             why = " The file is larger than this GitLab accepts as an attachment." if exc.http_status == 413 else ""
-            raise CheckError(f"uploading {path} failed: {exc}.{why} The comment was not posted.{done}") from exc
+            raise CheckError(f"uploading {path} failed: {exc}.{why} The comment was not {outcome}.{done}") from exc
         markdown = (result or {}).get("markdown") if isinstance(result, dict) else None
         if not markdown:
-            raise CheckError(f"GitLab answered the upload of {path} without its Markdown; the comment was not posted")
+            raise CheckError(
+                f"GitLab answered the upload of {path} without its Markdown; the comment was not {outcome}"
+            )
         links.append(str(markdown))
     return links
 

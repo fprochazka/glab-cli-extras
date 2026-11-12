@@ -121,7 +121,14 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
         "edit", parents=[mr_parent], help="Edit a note or a draft" if drafts else "Edit a note"
     )
     edit_parser.add_argument("note_ref", type=ref_type, metavar=ref_metavar, help=f"ID to edit, {ref_help}")
-    edit_parser.add_argument("--body", required=True, help='New note body text (use "-" for stdin)')
+    edit_parser.add_argument("--body", help='New note body text (use "-" for stdin). Required unless --attach is given')
+    edit_parser.add_argument(
+        "--attach",
+        action="append",
+        metavar="FILE",
+        help="Upload a file to the project and link it after the body text; images, video and audio show inline."
+        " Without --body, the links go into the current text. Repeat for more files",
+    )
 
     if drafts:
         # --- drafts ---

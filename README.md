@@ -289,6 +289,7 @@ glab-discussion write --body "…" --note                                  # a p
 glab-discussion write --body "…" --attach screen.png                     # upload a file and link it in the comment
 glab-discussion resolve <discussion id>                                  # also --unresolve
 glab-discussion edit note:123 --body "…"                                 # or draft:123, as read prints the ids
+glab-discussion edit note:123 --attach screen.png                        # add a file to the current text
 glab-discussion delete note:123
 glab-discussion diff --file src/app.py                                   # the diff with old and new line numbers; --version for an older diff version
 glab-discussion drafts publish --body - < summary.md --verdict reviewed  # publish your drafts as one review
@@ -298,6 +299,8 @@ glab-discussion drafts delete --force                                    # witho
 `write` also takes `--old-line` and `--commit` for a diff note, and `--resolve` with `--reply-to` and `--draft` to resolve the thread when the draft is published. `--no-draft` publishes at once. `--note` posts a plain comment, which nobody can resolve, at once and never as a draft; it takes none of the thread, diff note and draft options.
 
 `--attach <file>`, repeatable, uploads a file to the MR's project and adds the Markdown GitLab returns for it to the body: after the text and a blank line, one file per line, in the order given. GitLab decides how the file shows: an image, a video, an audio file or an SVG renders inline, and any other file is a download link. GitLab refuses a file over the instance's maximum attachment size, and the command then posts nothing. A signature line such as `<!-- plugin:command -->` at the end of the body stays the last line, so the files go before it. It works for every kind of `write`, drafts included: the file is uploaded when the draft is written and stays in the project if you delete the draft. A file that is missing or that you cannot read stops the command before any request. The files are uploaded after every other check, right before the comment is posted. The upload sends the file with `glab api --form`, which older glab versions lack.
+
+`edit` takes `--attach` too, with the same checks and placement. With `--body`, the links go into the new text. Without `--body`, `edit` reads the note's or draft's current text from GitLab and adds the links to it; `--body` is optional only then, and an `edit` with neither option is a usage error, exit 2. The files are uploaded after the current text is read and checked, so a failed read or a refused text leaves no upload behind, and a failed upload leaves the comment unchanged.
 
 `read --dump` writes the threads into the `threads/` dir of the MR's dir (see [Where files go](#where-files-go)), the same dir `glab-watch mr` writes, and prints the dir and the files that changed:
 

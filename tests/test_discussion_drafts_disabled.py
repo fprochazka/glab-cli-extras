@@ -60,6 +60,7 @@ def test_the_parser_keeps_them_when_drafts_are_enabled() -> None:
         ["write", "--no-draft", "--body", "A."],
         ["write", "--reply-to", DISCUSSION, "--resolve", "--body", "A."],
         ["edit", "draft:5", "--body", "A."],
+        ["edit", "draft:5", "--attach", "screen.png"],
         ["delete", "draft:5"],
     ],
 )

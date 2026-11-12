@@ -105,10 +105,13 @@ The line is invisible in rendered Markdown and stays in the API body: the write 
 ```bash
 glab-discussion resolve <discussion id>               # --unresolve to reopen
 glab-discussion edit note:<id> --body - < new.md      # or draft:<id>
+glab-discussion edit note:<id> --attach screen.png    # add a file to the current text, or draft:<id>
 glab-discussion delete note:<id>                      # or draft:<id>
 ```
 
 `resolve` reads the thread first and refuses one without a `Resolved:` line in its file, because GitLab cannot resolve it. A reply or resolve that gets 404 says whether the thread is gone or the error was transient. Each command prints the URL of the MR it acted on.
+
+`edit --attach <file>`, repeatable, adds files the same way as `write --attach`. With `--body`, they go into the new text; without it, they go into the comment's current text, which the command reads from GitLab. `edit` needs `--body`, `--attach`, or both.
 
 ## Giving a review
 

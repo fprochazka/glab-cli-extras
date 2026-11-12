@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Added:
+
+- `glab-discussion edit --attach <file>`, repeatable, adds files to a note or a draft with the same checks and placement as `write --attach`. With `--body`, the links go into the new text. Without `--body`, the command reads the current text from GitLab and adds the links to it, so `--body` is optional when `--attach` is given. The `discussion.quick_actions` setting applies to the text that is sent. A failed upload leaves the comment unchanged.
+
 Changed:
 
 - `glab-discussion write --attach <file>` takes any file, not only PNG, JPEG, GIF and WebP images, and adds the Markdown GitLab returns for it. Images, video, audio and SVG render inline; any other file, such as a log, is a download link. The command checks only that the file exists and can be read. When GitLab refuses a file over the instance's maximum attachment size, the error says so and nothing is posted.

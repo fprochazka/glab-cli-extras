@@ -147,3 +147,101 @@ def test_a_failed_upload_posts_nothing(fake: FakeGlab, screenshot: Path, capsys:
     err = capsys.readouterr().err
     assert "larger than this GitLab accepts as an attachment. The comment was not posted." in err
     assert [c.endpoint for c in fake.calls] == [f"{PROJECT}/uploads"]
+
+
+IMAGE = f"![screen.png](/uploads/{'f' * 32}/screen.png)"
+
+
+class TestEditAttach:
+    def test_without_body_adds_the_links_to_the_current_text_before_its_signature(
+        self, fake: FakeGlab, screenshot: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        fake.routes = [
+            Route(f"{PROJECT}/uploads", _upload("screen.png"), status=201),
+            Route(f"{MR_PATH}/notes/501", {"id": 501, "body": "Looks off.\n\n<!-- sdlc:mr-babysit -->\n"}),
+        ]
+        run("edit", "note:501", "--attach", str(screenshot))
+        assert [(c.method, c.endpoint) for c in fake.calls] == [
+            ("GET", f"{MR_PATH}/notes/501"),
+            ("POST", f"{PROJECT}/uploads"),
+            ("PUT", f"{MR_PATH}/notes/501"),
+        ]
+        assert fake.calls[-1].body == {"body": f"Looks off.\n\n{IMAGE}\n\n<!-- sdlc:mr-babysit -->\n"}
+        assert "Edited note:501" in capsys.readouterr().out
+
+    def test_with_body_adds_the_links_to_the_new_text_without_reading_the_old(
+        self, fake: FakeGlab, screenshot: Path
+    ) -> None:
+        fake.routes = [
+            Route(f"{PROJECT}/uploads", _upload("screen.png"), status=201),
+            Route(f"{MR_PATH}/notes/501", {"id": 501, "body": "New."}),
+        ]
+        run("edit", "note:501", "--body", "New.", "--attach", str(screenshot))
+        assert [(c.method, c.endpoint) for c in fake.calls] == [
+            ("POST", f"{PROJECT}/uploads"),
+            ("PUT", f"{MR_PATH}/notes/501"),
+        ]
+        assert fake.calls[-1].body == {"body": f"New.\n\n{IMAGE}"}
+
+    def test_a_draft_gets_the_links_and_keeps_its_position(self, fake: FakeGlab, screenshot: Path) -> None:
+        position = {
+            "position_type": "text",
+            "base_sha": "base",
+            "start_sha": "start",
+            "head_sha": "head",
+            "old_path": "src/a.py",
+            "new_path": "src/a.py",
+            "old_line": None,
+            "new_line": 42,
+        }
+        fake.routes = [
+            Route(f"{PROJECT}/uploads", _upload("screen.png"), status=201),
+            Route(f"{MR_PATH}/draft_notes/15", {"id": 15, "note": "Draft.\n", "position": position}),
+        ]
+        run("edit", "draft:15", "--attach", str(screenshot))
+        assert [(c.method, c.endpoint) for c in fake.calls] == [
+            ("GET", f"{MR_PATH}/draft_notes/15"),
+            ("POST", f"{PROJECT}/uploads"),
+            ("PUT", f"{MR_PATH}/draft_notes/15"),
+        ]
+        assert fake.calls[-1].body == {"note": f"Draft.\n\n{IMAGE}\n", "position": position}
+
+    def test_a_missing_file_stops_the_command_before_any_request(
+        self, fake: FakeGlab, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as exit_info:
+            run("edit", "note:501", "--attach", str(tmp_path / "gone.log"))
+        assert exit_info.value.code == 1
+        assert "gone.log: no such file; nothing was sent" in capsys.readouterr().err
+        assert fake.calls == []
+
+    def test_a_failed_upload_edits_nothing(
+        self, fake: FakeGlab, screenshot: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        fake.routes = [
+            Route(f"{PROJECT}/uploads", {"message": "413 Request Entity Too Large"}, status=413),
+            Route(f"{MR_PATH}/notes/501", {"id": 501, "body": "Old."}),
+        ]
+        with pytest.raises(SystemExit) as exit_info:
+            run("edit", "note:501", "--attach", str(screenshot))
+        assert exit_info.value.code == 1
+        assert "The comment was not edited." in capsys.readouterr().err
+        assert [c.method for c in fake.calls] == ["GET", "POST"]
+
+    def test_a_quick_action_in_the_current_text_is_refused_before_the_upload(
+        self, fake: FakeGlab, screenshot: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("GLAB_CLI_EXTRAS_DISCUSSION_QUICK_ACTIONS", "reject")
+        fake.routes = [Route(f"{MR_PATH}/notes/501", {"id": 501, "body": "/approve\n"})]
+        with pytest.raises(SystemExit) as exit_info:
+            run("edit", "note:501", "--attach", str(screenshot))
+        assert exit_info.value.code == 1
+        assert "quick actions" in capsys.readouterr().err
+        assert [c.method for c in fake.calls] == ["GET"]
+
+    def test_neither_body_nor_attach_is_a_usage_error(self, fake: FakeGlab, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as exit_info:
+            run("edit", "note:501")
+        assert exit_info.value.code == 2
+        assert "--body, --attach, or both" in capsys.readouterr().err
+        assert fake.calls == []
