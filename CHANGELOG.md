@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.2 (2026-11-13)
+
+Fixed:
+
+- In a Claude Code session that changed its directory with `/cd`, the commands write their files into the session's scratchpad, instead of into a new directory under the project slug of the new directory. It needs cc-blackbox 0.5.2, which builds the scratchpad path from the directory the session was launched in.
+
 ## 0.9.1 (2026-11-12)
 
 Fixed:
