@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.3 (2026-11-16)
+
+Changed:
+
+- Needs cc-blackbox 0.6.0. When several Claude Code profiles share one sessions dir, as claude-code-auth-switch can set up, cc-blackbox lists each session once, under the profile that runs it.
+
 ## 0.9.2 (2026-11-13)
 
 Fixed:
