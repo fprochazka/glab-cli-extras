@@ -3,17 +3,26 @@
 Status lines (the startup header, the end line, errors) go to stderr, so stdout carries only events. Claude Code puts
 a background Bash task's stderr into the task output next to its stdout, so an agent reads both. Status lines start
 with `glab-watch: ` and never with `{`, so a reader of the merged output can still tell them from events.
+
+The sinks themselves come from cc-blackbox: `StdoutSink` prints one JSON event per line, and `watch.claude` builds the
+`claude-message` sink.
 """
 
 from __future__ import annotations
 
-import json
 import sys
-from typing import Protocol, TextIO
+from typing import TextIO
+
+from cc_blackbox import EventSink
+from cc_blackbox import StdoutEventSink as StdoutSink
 
 from glab_cli_extras.events import Event
 
+__all__ = ["STATUS_PREFIX", "Sink", "StatusOutput", "StdoutSink"]
+
 STATUS_PREFIX = "glab-watch: "
+
+type Sink = EventSink[Event]
 
 
 class StatusOutput:
@@ -29,55 +38,3 @@ class StatusOutput:
     def line(self, text: str) -> None:
         self.stream.write(f"{STATUS_PREFIX}{text}\n")
         self.stream.flush()
-
-
-class Sink(Protocol):
-    name: str
-
-    def describe(self) -> str:
-        """One line for the startup header: the stream mode and its target."""
-        ...
-
-    def emit(self, events: list[Event]) -> None: ...
-
-    def seconds_until_flush(self) -> float | None:
-        """When a buffered batch is due, so the watcher wakes up for it; None when nothing is buffered."""
-        ...
-
-    def tick(self) -> None:
-        """Deliver a buffered batch whose time has come."""
-        ...
-
-    def alive(self) -> bool:
-        """False once the target is gone, which ends the watch."""
-        ...
-
-    def close(self) -> None: ...
-
-
-class StdoutSink:
-    name = "stdout"
-
-    def __init__(self, stream: TextIO | None = None) -> None:
-        self._stream = stream
-
-    def describe(self) -> str:
-        return "stdout (one JSON event per line)"
-
-    def emit(self, events: list[Event]) -> None:
-        stream = self._stream or sys.stdout
-        for event in events:
-            stream.write(json.dumps(event.to_json(), ensure_ascii=False, separators=(",", ":")) + "\n")
-        stream.flush()
-
-    def seconds_until_flush(self) -> float | None:
-        return None
-
-    def tick(self) -> None:
-        pass
-
-    def alive(self) -> bool:
-        return True
-
-    def close(self) -> None:
-        pass

@@ -95,14 +95,14 @@ wheels = [
 
 [[package]]
 name = "cc-blackbox"
-version = "0.6.0"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/69/ad/9696d029a0298f8886eae0c44ee1b5dff90248d64531b63a6c847fdddacb/cc_blackbox-0.6.0.tar.gz", hash = "sha256:598d00bb6fb2e5ba6c0ec532c247ad7c5cc5618397f46b76321a99240018c0ed", size = 155471, upload-time = "2026-11-16T10:16:26.911Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/04/fb/81fd05e5152677942aaa628de005219ff21b12eee550d8b63be5c13e8f9d/cc_blackbox-0.7.0.tar.gz", hash = "sha256:3d2f7dda8f255e6659e84621ea76decc4b11eb974ccb733482696df506261ce4", size = 167864, upload-time = "2026-11-16T17:15:01.544Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7e/da/1e665e772f3a1a4d60bfe1fb2a64cec3335b7a475a2703c8e6de39ddd9f2/cc_blackbox-0.6.0-py3-none-any.whl", hash = "sha256:ba81b5364c523fcc894f38ce6382fb47e82c60b43460ec6a8481ed78dddd9650", size = 97557, upload-time = "2026-11-16T10:16:25.663Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/4d/c305c65146534d8f3bb66db2ccefd79b6abf03a7d655cb04abfa19cb53d2/cc_blackbox-0.7.0-py3-none-any.whl", hash = "sha256:cee6a3851a5078d7e6e7d5a8c2e97865503e2f5c503be23038dd47da5329dccb", size = 107016, upload-time = "2026-11-16T17:14:59.903Z" },
 ]
 
 [[package]]
@@ -144,7 +144,7 @@ typecheck = [
 [package.metadata]
 requires-dist = [
     { name = "bash-classify", specifier = ">=0.14,<0.15" },
-    { name = "cc-blackbox", specifier = ">=0.6.0,<0.7" },
+    { name = "cc-blackbox", specifier = ">=0.7.0,<0.8" },
     { name = "rich", specifier = ">=14" },
     { name = "typer", specifier = ">=0.15" },
 ]

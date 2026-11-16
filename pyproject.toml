@@ -17,7 +17,7 @@ classifiers = [
 ]
 dependencies = [
   "bash-classify>=0.14,<0.15",
-  "cc-blackbox>=0.6.0,<0.7",
+  "cc-blackbox>=0.7.0,<0.8",
   "rich>=14",
   "typer>=0.15",
 ]

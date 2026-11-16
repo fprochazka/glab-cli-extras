@@ -14,14 +14,14 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from cc_blackbox import UnsupportedProtocol
+from cc_blackbox import MessageEventSink, UnsupportedProtocol
 
 from conftest import Clock
 from glab_cli_extras.events import Event
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.watch import streams
 from glab_cli_extras.watch.changelog import Changelog
-from glab_cli_extras.watch.claude import MAX_CONTENT_BYTES, ClaudeMessageSink, format_message, sender_name
+from glab_cli_extras.watch.claude import claude_message_sink, message_envelope, sender_name
 from glab_cli_extras.watch.sinks import StatusOutput, StdoutSink
 from test_watcher import REF as WATCHED
 from test_watcher import ScriptedBackend, daemon_event, run
@@ -95,7 +95,7 @@ def wait_frames(rx: Receiver, count: int) -> list[dict[str, Any]]:
 
 
 def test_a_burst_goes_out_as_one_message_after_three_seconds(receiver: Receiver, clock: Clock, tmp_path: Path) -> None:
-    sink = ClaudeMessageSink(
+    sink = claude_message_sink(
         cast(Any, fake_session(receiver.path)), REF, tmp_path / "events.jsonl", "next", StatusOutput(), clock=clock
     )
     assert "priority next" in sink.describe() and "'glab-watch mr group/project!42'" in sink.describe()
@@ -122,7 +122,7 @@ def test_only_the_first_watch_started_message_names_the_dir_and_the_changelog(
     receiver: Receiver, clock: Clock, tmp_path: Path
 ) -> None:
     changelog = tmp_path / "res" / "events.jsonl"
-    sink = ClaudeMessageSink(
+    sink = claude_message_sink(
         cast(Any, fake_session(receiver.path)), REF, changelog, "next", StatusOutput(), clock=clock
     )
     # The third batch is a watch_started repeated after a daemon restart: it announces nothing again.
@@ -147,7 +147,7 @@ def test_only_the_first_watch_started_message_names_the_dir_and_the_changelog(
 
 
 def test_watch_ended_is_sent_at_once_and_priority_is_passed(receiver: Receiver, clock: Clock, tmp_path: Path) -> None:
-    sink = ClaudeMessageSink(
+    sink = claude_message_sink(
         cast(Any, fake_session(receiver.path)), REF, tmp_path / "e.jsonl", "later", StatusOutput(), clock=clock
     )
     sink.emit([event("state_changed", 9, to="merged"), event("watch_ended", 10, reason="merged")])
@@ -157,7 +157,7 @@ def test_watch_ended_is_sent_at_once_and_priority_is_passed(receiver: Receiver, 
 
 
 def test_a_gone_session_ends_the_watch(receiver: Receiver, clock: Clock, tmp_path: Path) -> None:
-    sink = ClaudeMessageSink(
+    sink = claude_message_sink(
         cast(Any, fake_session(receiver.path)), REF, tmp_path / "e.jsonl", "next", StatusOutput(), clock=clock
     )
     receiver.close()
@@ -169,7 +169,7 @@ def test_a_gone_session_ends_the_watch(receiver: Receiver, clock: Clock, tmp_pat
 
 def test_liveness_is_rechecked_every_30_seconds(receiver: Receiver, clock: Clock, tmp_path: Path) -> None:
     alive = [True]
-    sink = ClaudeMessageSink(
+    sink = claude_message_sink(
         cast(Any, fake_session(receiver.path)),
         REF,
         tmp_path / "e.jsonl",
@@ -186,8 +186,9 @@ def test_liveness_is_rechecked_every_30_seconds(receiver: Receiver, clock: Clock
 
 def test_oversized_batches_become_a_summary(tmp_path: Path) -> None:
     events = [event("thread_updated", i, body="x" * 2000) for i in range(1, 60)]
-    content = format_message(REF, events, tmp_path / "events.jsonl")
-    assert len(content.encode()) < MAX_CONTENT_BYTES
+    envelope = message_envelope(REF, tmp_path / "events.jsonl")
+    content = envelope.format(events)
+    assert len(content.encode()) < envelope.max_bytes == 64 * 1024
     assert '"truncated":true' in content and '"thread_updated":59' in content and 'seq="1-59"' in content
 
 
@@ -210,7 +211,7 @@ def test_stream_selection(receiver: Receiver, tmp_path: Path, monkeypatch: pytes
     monkeypatch.delenv("GLAB_CLI_EXTRAS_BASE_DIR")
     monkeypatch.setattr(streams, "find_session", lambda: fake_session(receiver.path, scratchpad))
     chosen = streams.open_stream("auto", REF, "now", None, status)
-    assert isinstance(chosen.sink, ClaudeMessageSink) and chosen.sink.priority == "now"
+    assert isinstance(chosen.sink, MessageEventSink) and chosen.sink.priority == "now"
     assert chosen.changelog.events_path == (
         scratchpad
         / "glab-cli-extras"
@@ -234,7 +235,7 @@ def test_claude_messages_carry_the_watcher_numbering(tmp_path: Path) -> None:
     out = StringIO()
     run(backend, changelog, out)
     events = [Event.from_json(json.loads(line)) for line in out.getvalue().splitlines()]
-    assert 'seq="1-2"' in format_message(WATCHED, events, changelog.events_path)
+    assert 'seq="1-2"' in message_envelope(WATCHED, changelog.events_path).format(events)
 
 
 def test_an_incompatible_session_falls_back_to_stdout_with_a_reason(
@@ -286,14 +287,14 @@ def test_a_protocol_change_mid_run_moves_events_to_stdout(
     receiver: Receiver, clock: Clock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     sender = RefusingSender(UnsupportedProtocol("The session speaks peer protocol 2."))
-    sink = ClaudeMessageSink(
+    sink = claude_message_sink(
         cast(Any, fake_session(receiver.path)),
         REF,
         tmp_path / "e.jsonl",
         "next",
         StatusOutput(),
         clock=clock,
-        sender=cast(Any, sender),
+        rate_limiter=cast(Any, sender),
     )
     sink.emit([event("pushed", 1)])
     clock.advance(3)

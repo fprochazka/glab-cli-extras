@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Changed:
+
+- Needs cc-blackbox 0.7.0. The `claude-message` stream of `glab-watch` now runs on the event stream that moved from glab-cli-extras into cc-blackbox, so that other tools that report to a Claude Code session can share it. The messages, the `<glab-watcher>` envelope, the status lines on stderr and the choice between `claude-message` and stdout stay the same.
+
 ## 0.9.3 (2026-11-16)
 
 Changed:
