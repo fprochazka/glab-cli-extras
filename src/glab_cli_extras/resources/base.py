@@ -119,9 +119,15 @@ class Poller[S](ABC):
         """Average requests per poll, for the budget's demand estimate."""
         return 1.0
 
+    @classmethod
     @abstractmethod
+    def summarize(cls, ref: ResourceRef, snap: S) -> dict[str, Any]:
+        """A compact description of a snapshot, sent in `watch_started`. It reads only the snapshot, so whoever holds
+        one can describe it without a poller."""
+
     def summary(self) -> dict[str, Any]:
-        """A compact description of the current snapshot, sent in `watch_started`."""
+        """The description of the current snapshot, `{}` before the first poll."""
+        return self.summarize(self.ref, self.snapshot) if self.snapshot is not None else {}
 
     def children(self) -> frozenset[ResourceRef]:
         """Other resources whose events this one relays (an MR relays its head pipeline)."""

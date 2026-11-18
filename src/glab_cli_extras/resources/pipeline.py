@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 
 from glab_cli_extras.events import RawEvent
 from glab_cli_extras.gitlab.client import ApiError
+from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.resources.base import PollContext, Poller
 from glab_cli_extras.sync.job_logs import LogContent, fetch_log_content, wants_log
 from glab_cli_extras.sync.pipeline import (
@@ -219,10 +220,8 @@ class PipelinePoller(Poller[PipelineSnapshot]):
         # Most ETag probes are 304s, which the budget charges at 0.1.
         return 0.3 if self._state.supported else 1.0
 
-    def summary(self) -> dict[str, Any]:
-        snap = self.snapshot
-        if snap is None:
-            return {}
+    @classmethod
+    def summarize(cls, ref: ResourceRef, snap: PipelineSnapshot) -> dict[str, Any]:
         counts: dict[str, int] = {}
         for job in snap.jobs:
             counts[job.status] = counts.get(job.status, 0) + 1

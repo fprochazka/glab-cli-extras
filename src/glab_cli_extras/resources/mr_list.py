@@ -14,6 +14,7 @@ from typing import Any, ClassVar
 
 from glab_cli_extras.events import RawEvent
 from glab_cli_extras.gitlab.client import encode_project
+from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.resources.base import Poller
 
 OVERLAP = timedelta(minutes=2)
@@ -205,8 +206,6 @@ class MrListPoller(Poller[MrListSnapshot]):
     def next_delay(self) -> float:
         return INTERVAL
 
-    def summary(self) -> dict[str, Any]:
-        snap = self.snapshot
-        if snap is None:
-            return {}
+    @classmethod
+    def summarize(cls, ref: ResourceRef, snap: MrListSnapshot) -> dict[str, Any]:
         return {"project": snap.project, "watermark": snap.watermark, "recently_updated": len(snap.mrs)}

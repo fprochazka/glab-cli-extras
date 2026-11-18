@@ -17,6 +17,7 @@ from urllib.parse import quote
 from glab_cli_extras.events import RawEvent
 from glab_cli_extras.gitlab import queries
 from glab_cli_extras.gitlab.client import NotFound, encode_project
+from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.resources.base import Poller, gid_to_int, is_force_push, lower
 from glab_cli_extras.resources.pipeline import FINAL_PIPELINE_STATUSES
 
@@ -252,10 +253,8 @@ class BranchPoller(Poller[BranchSnapshot]):
             return 0.1 + 1.0 / 3
         return 1.0
 
-    def summary(self) -> dict[str, Any]:
-        snap = self.snapshot
-        if snap is None:
-            return {}
+    @classmethod
+    def summarize(cls, ref: ResourceRef, snap: BranchSnapshot) -> dict[str, Any]:
         latest = max(snap.pipelines, key=lambda p: p.id) if snap.pipelines else None
         return {
             "branch": snap.branch,

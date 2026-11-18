@@ -399,10 +399,8 @@ class MrPoller(Poller[MrSnapshot]):
     def next_delay(self) -> float:
         return INTERVAL_PREMIUM if self.ctx.client.budget.premium_level else INTERVAL
 
-    def summary(self) -> dict[str, Any]:
-        snap = self.snapshot
-        if snap is None:
-            return {}
+    @classmethod
+    def summarize(cls, ref: ResourceRef, snap: MrSnapshot) -> dict[str, Any]:
         summary: dict[str, Any] = {
             "iid": snap.iid,
             "title": snap.title,
@@ -429,7 +427,7 @@ class MrPoller(Poller[MrSnapshot]):
                 "id": snap.head_pipeline_id,
                 "status": snap.head_pipeline_status,
                 "web_url": snap.head_pipeline_web_url,
-                "watch_command": pipeline_watch_command(snap, self.ref.host),
+                "watch_command": pipeline_watch_command(snap, ref.host),
             }
         if snap.external_statuses is not None:
             summary["external_statuses"] = [
