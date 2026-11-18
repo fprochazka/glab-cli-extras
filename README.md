@@ -82,7 +82,7 @@ GitLab's schema introspection (`__type`) cannot replace the probe: GitLab answer
 
 ## glab-watch
 
-`glab-watch` reports every change to a GitLab resource as a JSON event. A shared per-user daemon does the polling, so ten watchers cost about as much API budget as one.
+`glab-watch` reports every change to a GitLab resource as a JSON event. A shared per-user daemon does the polling, so ten watchers cost about as much API budget as one. It runs on [cli-watch-kit](https://github.com/fprochazka/cli-watch-kit), which was extracted from it.
 
 ### Usage
 
@@ -98,6 +98,8 @@ glab-watch branch group/project main                 # a branch; the repo is opt
 A watcher runs until its resource ends (an MR is merged or closed, a pipeline finishes), until `--until`, `--timeout` or `--idle-after` fires, or until it gets SIGTERM or Ctrl-C. `mrs` and `branch` run until stopped. The last event is always `watch_ended` with a `reason`.
 
 The exit code is 0 when the watch ends normally, 1 when the resource is not found or the daemon fails, and 2 for a usage error.
+
+One watcher at a time writes a resource dir. A second watcher of the same resource into the same base dir waits up to 5 s for the first one to finish, then exits with 1 and says so; stop the first one, or give the second its own `--base-dir`. Watchers in different base dirs, such as two Claude Code sessions with their own scratchpads, always work side by side: they share one poller of the daemon, and each gets every event into its own files.
 
 ### Options
 
@@ -130,15 +132,15 @@ On start, every watcher prints a header. Each line starts with `glab-watch: `:
 glab-watch: resource: mr gitlab.example.com/group/project!123
 glab-watch: stream: stdout (one JSON event per line)
 glab-watch: dir: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123
-glab-watch: state: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/state.json
 glab-watch: changelog: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/events.jsonl
+glab-watch: state: /tmp/glab-cli-extras-1000/gitlab.example.com/group/project/-/merge_requests/123/state.json
 glab-watch: events: state_changed,draft_changed,pushed,… (always: watch_started,watch_degraded,watch_ended)
 glab-watch: ignored: thread_created,thread_updated,thread_resolved,thread_unresolved
-glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-v4.sock, log /run/user/1000/glab-cli-extras/daemon-v4.log
+glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-l1-a5.sock, log /run/user/1000/glab-cli-extras/daemon-l1-a5.log
 glab-watch: restart with: glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123 --events=<kinds|groups> --exclude-events=<kinds|groups> (groups: status, comments, push, pipeline)
 ```
 
-The `state:` line appears for `mr` and `pipeline` only. A watch with `--quiet-after` or `--stuck-after` adds a `thresholds:` line, a `pipeline` watch adds a `logs:` line, a watch with `--until`, `--timeout` or `--idle-after` adds an `ends:` line, and a `stream fallback:` line says why `auto` did not message the session.
+The `state:` line appears for `mr` and `pipeline` only. A watch with `--quiet-after` or `--stuck-after` adds a `thresholds:` line, a `pipeline` watch adds a `logs:` line after `state:` and `--logs=failed|all|none` to its `restart with:` line, a watch with `--until`, `--timeout` or `--idle-after` adds an `ends:` line, and a `stream fallback:` line says why `auto` did not message the session.
 
 The header and the other status lines (`ended: …`, errors) always go to stderr, so stdout carries only events. Claude Code puts a background task's stderr into the task output next to its stdout, so an agent sees both. A status line never starts with `{`: in merged output, every line that starts with `{` is an event.
 
@@ -161,7 +163,7 @@ Lifecycle events come with every resource and cannot be filtered out:
 `mr`:
 
 - `state_changed` (`from`, `to`, and `reopened: true` for closed to opened), `draft_changed`, `title_changed`, `description_changed`
-- `pushed`: `from`, `to`, `forced`. A force-push is detected with one `merge_base` request per push.
+- `pushed`: `from`, `to`, `forced`. A force-push is detected with one `merge_base` request per push. A push that a watcher learns about from its own baseline after a daemon restart, while another watcher already brought the MR back, has `forced: null`: that report comes from two snapshots, without a request.
 - `merge_status_changed`: GitLab's transient `checking`, `unchecked` and `preparing` are skipped, and so is every change once the MR is merged or closed.
 - `target_branch_changed` (`from`, `to`): the MR was re-targeted, for example onto another MR's branch or back onto the default branch.
 - `approvals_changed`, `reviewers_changed`, and `assignees_changed` and `labels_changed` (the new list, `added`, `removed`).
@@ -223,18 +225,20 @@ When the session's messaging does not match what the cc-blackbox SDK speaks, for
 
 ### The daemon
 
-The first watcher starts the daemon, `python -m glab_cli_extras.daemon`, as a detached process. It exits 30 s after its last watcher is gone. You never have to start it. If it cannot start, the watcher exits and suggests `--no-daemon`.
+The first watcher starts the daemon, `python -m glab_cli_extras.watch.daemon`, as a detached process. It exits 30 s after its last watcher is gone. You never have to start it. If it cannot start, the watcher exits and suggests `--no-daemon`.
 
 ```bash
-glab-watch daemon status      # subscriptions, resources, request counts and budget per host; --json for everything
+glab-watch daemon status      # subscriptions, resources, budget per host and request counts; --json for everything
 glab-watch daemon logs -n 100 # the end of the daemon's log, 50 lines by default
-glab-watch daemon stop        # running watchers start a new daemon on their next poll and carry on
+glab-watch daemon stop        # running watchers start a new daemon on their next poll and carry on; ends a hung daemon too
 ```
 
-- **One daemon per user.** It holds an OS lock on `daemon-v4.lock` in its state dir (`$XDG_RUNTIME_DIR/glab-cli-extras/` on Linux, `$TMPDIR/glab-cli-extras/` on macOS, `%LOCALAPPDATA%\glab-cli-extras\run\` on Windows). Watchers that start at the same moment start one daemon, not one each.
+- **One daemon per user.** It holds an OS lock on `daemon-l1-a5.lock` in its state dir (`$XDG_RUNTIME_DIR/glab-cli-extras/` on Linux, `$TMPDIR/glab-cli-extras/` on macOS, `%LOCALAPPDATA%\glab-cli-extras\run\` on Windows). Watchers that start at the same moment start one daemon, not one each. The names carry the protocol versions of cli-watch-kit and of glab-watch, so the daemon of a glab-watch before cli-watch-kit (`daemon-v4.sock`) is another daemon: it keeps serving the watchers started before an upgrade and exits 30 s after the last of them.
+- **Upgrades.** A watcher with newer code than the running daemon (a newer release, or an editable install that changed) asks it to stop and starts a current one; the other watchers subscribe again from their baselines.
+- **A hung daemon**, one that holds its lock but answers nothing, shows in `daemon status` as running but not answering. `daemon stop` kills it, and a watcher whose polls time out three times in a row replaces it, in both cases only after checking that the process is glab-watch's daemon.
 - **Leases.** Each watcher polls the daemon every 5 s, which renews its subscriptions. A watcher that dies stops costing anything 20 s later.
-- **Restarts.** If the daemon goes away, watchers start a new one and subscribe again. The new daemon compares GitLab's state with the snapshot each watcher kept, so a change made in between is still reported, and nothing is reported twice.
-- **Budget.** The daemon paces each host on GitLab's `RateLimit-Remaining` and `RateLimit-Reset` headers and uses at most half of what is left. A host without those headers gets 60 requests a minute. When the budget is short, every poll interval grows by the same factor. A 429 pauses the whole host for its `Retry-After`.
+- **Restarts.** If the daemon goes away, watchers start a new one and subscribe again. The new daemon compares GitLab's state with the snapshot each watcher kept, so a change made in between is still reported, to every watcher, and nothing is reported twice. A watcher that comes back after another one gets that gap from a diff against the snapshot the first one polled, which follows the first one's filters: it can miss thread, external status or pipeline changes, and its `job_finished` events have no `log_truncated` or `after_push`. A subscribe that fails for a reason that may pass, such as GitLab being unreachable after a suspend, is tried again with a backoff.
+- **Budget.** The daemon paces each host on GitLab's `RateLimit-Remaining` and `RateLimit-Reset` headers and uses at most half of what is left. A host without those headers gets 60 requests a minute. When the budget is short, every poll interval grows by the same factor, but never past the time until GitLab resets the limit. A 429 pauses the whole host for its `Retry-After`. A poll that fails is reported once as `watch_degraded` and tried again with a backoff; it never stops the other resources.
 - **Cheap probes.** Pipelines are polled through GitLab's GraphQL ETag cache: an unchanged pipeline answers with a 304 before any query runs. Base intervals: pipeline 5 s while running, MR 30 s (15 s on hosts with a high rate limit), branch pipelines 10 s, branch pushes 30 s, `mrs` 60 s.
 - **Sharing.** Watchers of the same resource share one poller. All watched branches of a project share one push-event request.
 - **No files.** The daemon writes no files. It fetches each log and each changed thread once, keeps it in memory for a while, and hands it to every watcher that asks, so ten watchers of one pipeline cost one download. The watchers write the files. The daemon keeps the [capabilities](#the-capability-cache) of each host in memory for a day instead of in the cache dir.
@@ -480,6 +484,13 @@ To run against a local checkout of [cc-blackbox](https://github.com/fprochazka/c
 
 ```bash
 uv run --with-editable ../cc-blackbox pytest
+```
+
+glab-watch runs on [cli-watch-kit](https://github.com/fprochazka/cli-watch-kit). To change both at once, install a local checkout of the library into the env after `uv sync`, and run the checks with `uv run --no-sync`, so that uv does not put the release back:
+
+```bash
+uv pip install -e '../cli-watch-kit[claude-code]'
+uv run --no-sync pytest
 ```
 
 The tests need no network and no glab login. A fake `glab` (`tests/fakeglab.py`) answers with the response shapes recorded from a GitLab 19.5 instance, in process for the pollers and as a real executable on `PATH` for the daemon tests, which start real daemons in temporary dirs.

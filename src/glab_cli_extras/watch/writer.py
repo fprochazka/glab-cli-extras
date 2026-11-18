@@ -11,9 +11,12 @@ from __future__ import annotations
 import shlex
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
-from glab_cli_extras.daemon.transport import DaemonMismatch
+from cli_watch_kit.client import Backend
+from cli_watch_kit.daemon.transport import DaemonMismatch
+from cli_watch_kit.sinks import StatusOutput
+
 from glab_cli_extras.events import WATCH_DEGRADED, WATCH_ENDED, WATCH_STARTED, Event, utc_now_iso
 from glab_cli_extras.gitlab.client import ApiError
 from glab_cli_extras.gitlab.refs import ResourceRef
@@ -25,13 +28,10 @@ from glab_cli_extras.store.layout import THREADS_DIR, ensure_readme, pipeline_di
 from glab_cli_extras.store.locks import LockTimeout
 from glab_cli_extras.store.state import load_state, locked, put_snapshot, save_state
 from glab_cli_extras.store.threads import ThreadStore, render_thread
-from glab_cli_extras.sync.job_logs import FINAL_JOB_STATUSES, LogsMode, wants_log
+from glab_cli_extras.sync.job_logs import FINAL_JOB_STATUSES, LogContent, LogsMode, wants_log
 from glab_cli_extras.sync.mr import MrSnapshot, snapshot_users, thread_sig
 from glab_cli_extras.sync.pipeline import JobState, PipelineSnapshot
-from glab_cli_extras.watch.sinks import StatusOutput
-
-if TYPE_CHECKING:
-    from glab_cli_extras.watch.client import Backend
+from glab_cli_extras.watch.source import decode_log
 
 COMMENT_KINDS = frozenset({"thread_created", "thread_updated", "thread_resolved", "thread_unresolved"})
 LOCK_TIMEOUT = 60.0
@@ -41,8 +41,37 @@ class WriteError(RuntimeError):
     pass
 
 
+class Fetches(Protocol):
+    """What the writer asks the daemon for: the files' content, from the daemon's cache and within its budget."""
+
+    def fetch_job_log(self, host: str, project: str, job_id: int) -> LogContent: ...
+
+    def fetch_threads(self, ref: ResourceRef, ids: set[str]) -> dict[str, dict[str, Any]]: ...
+
+    def fetch_dump(self, ref: ResourceRef) -> dict[str, Any]: ...
+
+
+class DaemonFetches:
+    """The fetches as the source's ops, through the watcher's backend (the daemon, or the engine with --no-daemon)."""
+
+    def __init__(self, backend: Backend) -> None:
+        self.backend = backend
+
+    def fetch_job_log(self, host: str, project: str, job_id: int) -> LogContent:
+        payload = {"host": host, "project": project, "job_id": job_id}
+        return decode_log(self.backend.call("fetch_job_log", payload).get("log"))
+
+    def fetch_threads(self, ref: ResourceRef, ids: set[str]) -> dict[str, dict[str, Any]]:
+        found = self.backend.call("fetch_threads", {"resource": ref.to_wire(), "ids": sorted(ids)}).get("discussions")
+        return dict(found) if isinstance(found, dict) else {}
+
+    def fetch_dump(self, ref: ResourceRef) -> dict[str, Any]:
+        dump = self.backend.call("fetch_dump", {"resource": ref.to_wire()}).get("dump")
+        return dict(dump) if isinstance(dump, dict) else {}
+
+
 class ResourceWriter:
-    def __init__(self, base: Path, ref: ResourceRef, backend: Backend, logs: LogsMode, status: StatusOutput) -> None:
+    def __init__(self, base: Path, ref: ResourceRef, backend: Fetches, logs: LogsMode, status: StatusOutput) -> None:
         self.base = base
         self.ref = ref
         self.backend = backend

@@ -13,7 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from glab_cli_extras.daemon.cache import ByteBoundedCache
+from cli_watch_kit.daemon.cache import ByteBoundedCache
+
 from glab_cli_extras.events import RawEvent
 from glab_cli_extras.gitlab.client import ApiError, GitLabClient, encode_project
 from glab_cli_extras.gitlab.refs import ResourceKind, ResourceRef
@@ -128,13 +129,6 @@ class Poller[S](ABC):
     def summary(self) -> dict[str, Any]:
         """The description of the current snapshot, `{}` before the first poll."""
         return self.summarize(self.ref, self.snapshot) if self.snapshot is not None else {}
-
-    def children(self) -> frozenset[ResourceRef]:
-        """Other resources whose events this one relays (an MR relays its head pipeline)."""
-        return frozenset()
-
-    def child_options(self, child: ResourceRef) -> PollerOptions | None:
-        return None
 
     @property
     def terminal(self) -> bool:

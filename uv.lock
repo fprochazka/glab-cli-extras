@@ -106,6 +106,32 @@ wheels = [
 ]
 
 [[package]]
+name = "cli-watch-kit"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/07/ef/dfdfffe3a77a4b9c26d79e1e52d35996c6b3e0ba12a7ea0f2acfb1282b32/cli_watch_kit-0.1.1.tar.gz", hash = "sha256:9fd4609a6284ce37c9e09f397971dfa26dc7460d2e532898569e4b824487d181", size = 126764, upload-time = "2026-11-18T15:49:58.916Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ac/58/d40f8c410885dc64d7e39f3c98c991a09a861db8f6129d145ce01a458f8e/cli_watch_kit-0.1.1-py3-none-any.whl", hash = "sha256:80d6ea793c38d4286087a0676d2476d891a15575363ff4ec39e6ccdbb5b17508", size = 74926, upload-time = "2026-11-18T15:49:57.357Z" },
+]
+
+[package.optional-dependencies]
+claude-code = [
+    { name = "cc-blackbox" },
+]
+
+[[package]]
+name = "click"
+version = "8.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/45/37/edbf1b0707709013c0cf2e8317e03d97ed29bf4cac709fe328904ae92a38/click-8.5.1.tar.gz", hash = "sha256:9bbfada76703fd1d784b83eea012e3e8c6a001a876543ef104fa56aaaeb072b4", size = 399151, upload-time = "2026-11-06T17:37:01.021Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/7d/164b7ffc8624fe9efb4221bf9af485d5c1e41b9ae118045d2b6dc5457d8b/click-8.5.1-py3-none-any.whl", hash = "sha256:8bb5376d2006950386f8c6427613334a2acadc5f559cb80e638d00b4df957e37", size = 126163, upload-time = "2026-11-06T17:36:59.287Z" },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -121,6 +147,7 @@ source = { editable = "." }
 dependencies = [
     { name = "bash-classify" },
     { name = "cc-blackbox" },
+    { name = "cli-watch-kit", extra = ["claude-code"] },
     { name = "rich" },
     { name = "typer" },
 ]
@@ -145,6 +172,7 @@ typecheck = [
 requires-dist = [
     { name = "bash-classify", specifier = ">=0.14,<0.15" },
     { name = "cc-blackbox", specifier = ">=0.11,<0.13" },
+    { name = "cli-watch-kit", extras = ["claude-code"], specifier = ">=0.1.1,<0.2" },
     { name = "rich", specifier = ">=14" },
     { name = "typer", specifier = ">=0.15" },
 ]

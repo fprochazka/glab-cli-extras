@@ -1,8 +1,9 @@
+"""glab's own host budget, which the one-shot commands pace on. The daemon paces on cli-watch-kit's."""
+
 from __future__ import annotations
 
 import pytest
 
-from glab_cli_extras.daemon.scheduler import Scheduler
 from glab_cli_extras.gitlab.budget import HostBudget
 
 NOW = 1_000_000.0
@@ -45,31 +46,3 @@ def test_429_blocks_the_host_and_backs_off_exponentially() -> None:
     assert budget.blocked_until == NOW + 31 + 10
     budget.on_success()
     assert budget.backoff == 5
-
-
-def test_stretch_factor_spreads_shortage_evenly() -> None:
-    budget = HostBudget(fixed_per_minute=60)
-    assert budget.stretch_factor(0.5, NOW) == 1.0
-    assert budget.stretch_factor(3.0, NOW) == pytest.approx(3.0)
-
-
-def test_scheduler_round_robin_and_urgent_first() -> None:
-    scheduler = Scheduler()
-    scheduler.schedule("busy-pipeline", 0)
-    scheduler.schedule("quiet-mr", 5)
-    scheduler.mark_served("busy-pipeline", 1)
-    scheduler.schedule("busy-pipeline", 2)
-    # Both due: the one served longest ago (never) goes first, even though it became due later.
-    assert scheduler.ready(10) == ["quiet-mr", "busy-pipeline"]
-    scheduler.schedule("terminal-probe", 9, urgent=True)
-    assert scheduler.ready(10)[0] == "terminal-probe"
-    assert scheduler.ready(1) == []
-    assert scheduler.next_due() == 2
-
-
-def test_scheduler_forget_and_remove() -> None:
-    scheduler = Scheduler()
-    scheduler.schedule("a", 1)
-    assert "a" in scheduler
-    scheduler.remove("a")
-    assert "a" not in scheduler and scheduler.next_due() is None

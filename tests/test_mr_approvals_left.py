@@ -11,17 +11,18 @@ import json
 from pathlib import Path
 
 import pytest
+from cli_watch_kit.budget import Budget
 
 from conftest import Clock
 from fakeglab import FakeGlab, Route
 from glab_cli_extras import paths
-from glab_cli_extras.daemon.engine import Engine
 from glab_cli_extras.gitlab import capabilities as caps
 from glab_cli_extras.gitlab.capabilities import Capabilities, CapabilityStore, DiskCapabilityStore
 from glab_cli_extras.gitlab.client import ApiError, GitLabClient
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.gitlab.retry import standalone_client
 from glab_cli_extras.sync import mr as mr_sync
+from glab_cli_extras.watch.source import GlabSource
 from shapes import HOST, PROJECT, gql_mr
 
 REF = ResourceRef("mr", HOST, PROJECT, 42)
@@ -201,12 +202,13 @@ def test_probe_rejected_by_an_old_gitlab_is_kept_as_unknown(clock: Clock, tmp_pa
 
 def test_daemon_keeps_capabilities_in_memory_and_writes_no_file(clock: Clock, tmp_path: Path) -> None:
     fake = FakeGlab([probe(False), *CE_ROUTES])
-    engine = Engine(runner=fake, clock=clock)
+    source = GlabSource(runner=fake, clock=clock)
+    budget = Budget(dict(source.dimensions))
 
-    fetch(engine.client_for(HOST))
-    fetch(engine.client_for(HOST))
+    fetch(source.client(HOST, budget))
+    fetch(source.client(HOST, budget))
     assert requests(fake) == ["probe", "without", "without"]
-    assert type(engine.client_for(HOST).capability_store) is CapabilityStore
+    assert type(source.client(HOST, budget).capability_store) is CapabilityStore
     assert not paths.cache_dir().exists()
     assert not list(tmp_path.rglob("capabilities.json"))
 

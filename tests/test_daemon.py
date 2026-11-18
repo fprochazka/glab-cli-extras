@@ -1,4 +1,5 @@
-"""Daemon lifecycle with real processes: spawn, the single-instance lock, leases, idle shutdown, restart.
+"""glab-watch's daemon on cli-watch-kit with real processes: the glab app's daemon module, its fetch ops, the watch
+command end to end, and the daemon commands. The library's own tests cover the lifecycle in depth.
 
 Each test gets a short private state dir (Unix socket paths are limited to about 104 bytes) and a fake `glab` first
 on PATH, and stops every daemon it started.
@@ -21,17 +22,36 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cli_watch_kit.daemon import lifecycle
+from cli_watch_kit.daemon.transport import DaemonFiles, DaemonUnavailable
+from cli_watch_kit.daemon.transport import request as daemon_request
 
 from fakeglab import Route, install_fake_glab, write_spec
 from glab_cli_extras import __version__
-from glab_cli_extras.daemon.lifecycle import daemon_running, ensure_daemon, spawn_daemon, stop_daemon
-from glab_cli_extras.daemon.server import decode_log
-from glab_cli_extras.daemon.transport import PROTOCOL_VERSION, DaemonFiles, DaemonUnavailable, use_tcp
-from glab_cli_extras.daemon.transport import request as daemon_request
+from glab_cli_extras.gitlab.refs import ResourceRef
+from glab_cli_extras.watch.app import APP, APP_PROTOCOL
+from glab_cli_extras.watch.source import decode_log, target_of
 from shapes import HOST, PROJECT, gql_job, gql_pipeline
 
 SRC = str(Path(__file__).resolve().parents[1] / "src")
 PIPELINE_URL = f"https://{HOST}/{PROJECT}/-/pipelines/5001"
+STARTED = f"daemon glab-cli-extras {__version__} (cli-watch-kit"
+
+
+def daemon_running(files: DaemonFiles) -> bool:
+    return lifecycle.daemon_running(files)
+
+
+def ensure_daemon(files: DaemonFiles) -> dict[str, Any]:
+    return lifecycle.ensure_daemon(APP, files)
+
+
+def spawn_daemon(files: DaemonFiles) -> subprocess.Popen[bytes]:
+    return lifecycle.spawn_daemon(APP, files)
+
+
+def stop_daemon(files: DaemonFiles) -> bool:
+    return lifecycle.stop_daemon(files, kill=APP)
 
 
 @dataclass
@@ -60,12 +80,11 @@ def wait_for(condition: Callable[[], bool], timeout: float, what: str) -> None:
 @pytest.fixture(params=["unix", "tcp"] if os.name != "nt" else ["tcp"])
 def daemon_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[DaemonEnv]:
     root = Path(tempfile.mkdtemp(prefix="gce-"))
-    files = DaemonFiles(root / "s")
     install_fake_glab(root / "bin")
     spec, calls = root / "spec.json", root / "calls.jsonl"
     write_spec(spec, [])
     monkeypatch.setenv("PATH", str(root / "bin") + os.pathsep + os.environ.get("PATH", ""))
-    monkeypatch.setenv("GLAB_CLI_EXTRAS_STATE_DIR", str(files.state_dir))
+    monkeypatch.setenv("GLAB_CLI_EXTRAS_STATE_DIR", str(root / "s"))
     monkeypatch.setenv("GLAB_CLI_EXTRAS_BASE_DIR", str(root / "base"))
     monkeypatch.setenv("GLAB_CLI_EXTRAS_IDLE_TIMEOUT", "2")
     monkeypatch.setenv("GLAB_CLI_EXTRAS_LEASE_TIMEOUT", "2")
@@ -77,6 +96,7 @@ def daemon_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) 
         monkeypatch.setenv("GLAB_CLI_EXTRAS_TRANSPORT", "tcp")
     else:
         monkeypatch.delenv("GLAB_CLI_EXTRAS_TRANSPORT", raising=False)
+    files = DaemonFiles.for_app(APP)
     env = DaemonEnv(files, spec, calls, root)
     try:
         yield env
@@ -87,8 +107,8 @@ def daemon_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) 
 
 
 CLIENT = (
-    "from glab_cli_extras.daemon.lifecycle import ensure_daemon; from glab_cli_extras.daemon.transport import "
-    "DaemonFiles; print(ensure_daemon(DaemonFiles.default())['pid'])"
+    "from cli_watch_kit.daemon.lifecycle import ensure_daemon; from glab_cli_extras.watch.app import APP;"
+    " print(ensure_daemon(APP)['pid'])"
 )
 
 
@@ -105,7 +125,8 @@ def test_concurrent_clients_start_exactly_one_daemon(daemon_env: DaemonEnv) -> N
     assert len(pids) == 1
     assert daemon_running(daemon_env.files)
     log = daemon_env.files.log.read_text()
-    assert log.count(f"daemon {__version__} started") == 1
+    assert log.count(STARTED) == 1
+    assert daemon_env.files.socket.name == f"daemon-l1-a{APP_PROTOCOL}.sock"
 
 
 def test_the_daemon_hands_a_large_log_to_its_clients_and_fetches_it_once(daemon_env: DaemonEnv) -> None:
@@ -132,12 +153,10 @@ def test_the_daemon_hands_a_large_log_to_its_clients_and_fetches_it_once(daemon_
     assert daemon_env.calls.read_text().count("jobs/1/trace") == 1
 
 
-@pytest.mark.skipif(use_tcp(), reason="only a Unix socket has a path length limit")
+@pytest.mark.skipif(os.name == "nt", reason="only a Unix socket has a path length limit")
 def test_a_socket_path_too_long_for_a_unix_socket_fails_at_once_with_the_reason(tmp_path: Path) -> None:
-    files = DaemonFiles(tmp_path / ("d" * 120))
-    with pytest.raises(
-        DaemonUnavailable, match=r"above the 10[37]-byte limit of Unix sockets; set GLAB_CLI_EXTRAS_STATE_DIR"
-    ):
+    files = DaemonFiles.for_app(APP, tmp_path / ("d" * 120))
+    with pytest.raises(DaemonUnavailable, match=r"above the 10[37]-byte limit of Unix sockets"):
         ensure_daemon(files)
 
 
@@ -155,8 +174,9 @@ def _subscribe(files: DaemonFiles, client_id: str) -> dict[str, Any]:
         {
             "op": "subscribe",
             "client_id": client_id,
-            "resource": {"kind": "pipeline", "host": HOST, "project": PROJECT, "id": 5001},
-            "options": {"events": ["status_changed", "job_finished", "finished"], "logs": "none"},
+            "target": target_of(ResourceRef("pipeline", HOST, PROJECT, 5001)).to_wire(),
+            "options": {"events": ["status_changed", "job_finished", "finished"]},
+            "source_options": {"logs": "none"},
         },
     )
 
@@ -360,7 +380,14 @@ def test_daemon_cli_status_and_stop(daemon_env: DaemonEnv) -> None:
         timeout=30,
     )
     assert status.returncode == 0, status.stderr
-    assert json.loads(status.stdout)["protocol"] == PROTOCOL_VERSION
+    assert json.loads(status.stdout)["app_protocol"] == APP_PROTOCOL
+    text = subprocess.run(
+        [sys.executable, "-c", "from glab_cli_extras.cli.watch import main; main()", "daemon", "status"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert text.stdout.startswith(f"daemon: pid {json.loads(status.stdout)['pid']}, glab-cli-extras {__version__}")
     stop = subprocess.run(
         [sys.executable, "-c", "from glab_cli_extras.cli.watch import main; main()", "daemon", "stop"],
         capture_output=True,
@@ -412,7 +439,7 @@ def test_killing_a_watchers_whole_process_tree_leaves_the_shared_daemon_running(
     assert [json.loads(line)["data"]["reason"] for line in rest.splitlines()] == ["timeout"]
     assert "daemon restarted" not in err
     assert daemon_request(daemon_env.files, {"op": "hello"})["pid"] == daemon_pid
-    assert daemon_env.files.log.read_text().count(f"daemon {__version__} started") == 1
+    assert daemon_env.files.log.read_text().count(STARTED) == 1
 
 
 @pytest.mark.skipif(os.name == "nt", reason="uses SIGSTOP and SIGTERM")
@@ -435,4 +462,4 @@ def test_a_stopping_watcher_never_starts_a_daemon(daemon_env: DaemonEnv) -> None
     assert json.loads(rest.splitlines()[-1])["data"]["reason"] == "signal SIGTERM"
     time.sleep(1.0)
     assert not daemon_running(daemon_env.files), "the stopping watcher started a new daemon"
-    assert daemon_env.files.log.read_text().count(f"daemon {__version__} started") == 1
+    assert daemon_env.files.log.read_text().count(STARTED) == 1

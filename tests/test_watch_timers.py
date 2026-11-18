@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import io
 import json
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from glab_cli_extras.events import Event
+from cli_watch_kit.changelog import Changelog
+from cli_watch_kit.client import Watcher, WatchSettings
+from cli_watch_kit.sinks import StatusOutput, StdoutSink
+from cli_watch_kit.timers import ClientTimer
+
+from glab_cli_extras.cli.watch import also_subscribe
+from glab_cli_extras.events import CATALOG, THRESHOLD_OPTIONS, Event
 from glab_cli_extras.gitlab.refs import ResourceRef
-from glab_cli_extras.sync.job_logs import LogContent
-from glab_cli_extras.watch.changelog import Changelog
-from glab_cli_extras.watch.client import Watcher, WatchSettings
-from glab_cli_extras.watch.sinks import StatusOutput, StdoutSink
+from glab_cli_extras.watch.source import target_of
 from glab_cli_extras.watch.timers import Thresholds, WatchTimers, format_duration
+from watch_harness import ScriptedBackend, Ticks
 
 MR = ResourceRef("mr", "gitlab.example.com", "group/project", 42)
 PIPELINE = ResourceRef("pipeline", "gitlab.example.com", "group/project", 5001)
@@ -149,76 +152,44 @@ def test_durations_print_as_the_options_take_them() -> None:
     assert [format_duration(s) for s in (45, 120, 5400, 7200, 3661)] == ["45s", "2m", "1h30m", "2h", "1h1m1s"]
 
 
-class SnapshotBackend:
-    """Answers each poll with the next step: (events, snapshot data or None)."""
-
-    def __init__(self, ref: ResourceRef, steps: list[tuple[list[dict[str, Any]], Any]]) -> None:
-        self.ref = ref
-        self.steps: Iterator[tuple[list[dict[str, Any]], Any]] = iter(steps)
-        self.subscribed: frozenset[str] = frozenset()
-        self.hash = 0
-
-    def describe(self) -> str:
-        return "scripted"
-
-    def subscribe(
-        self, client_id: str, ref: ResourceRef, events: frozenset[str], logs: str, baseline: Any
-    ) -> tuple[str, int]:
-        self.subscribed = events
-        return "sub", 0
-
-    def poll(self, client_id: str, cursors: dict[str, int]) -> dict[str, Any]:
-        events, snapshot = next(self.steps, ([], None))
-        response: dict[str, Any] = {"events": {"sub": events}, "next_poll_ms": 0}
-        if snapshot is not None:
-            self.hash += 1
-            response["snapshots"] = {"sub": {"hash": str(self.hash), "data": snapshot}}
-        return response
-
-    def unsubscribe(self, client_id: str, subscription_id: str) -> None:
-        pass
-
-    def fetch_job_log(self, host: str, project: str, job_id: int) -> LogContent:
-        raise AssertionError("no log expected")
-
-    def fetch_threads(self, ref: ResourceRef, ids: set[str]) -> dict[str, dict[str, Any]]:
-        raise AssertionError("no thread expected")
-
-    def fetch_dump(self, ref: ResourceRef) -> dict[str, Any]:
-        raise AssertionError("no dump expected")
-
-    def begin_shutdown(self) -> None:
-        pass
-
-    def close(self) -> None:
-        pass
-
-
-class Clock:
-    """Advances 30 s per reading, as if every poll took that long."""
-
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        self.now += 30.0
-        return self.now
+def watcher(
+    backend: ScriptedBackend,
+    selected: frozenset[str],
+    tmp_path: Path,
+    out: io.StringIO,
+    *,
+    thresholds: Thresholds,
+    until: str | None = None,
+    timeout: float | None = None,
+    idle_after: float | None = None,
+) -> Watcher:
+    """A watcher of the MR set up the way `glab-watch mr` sets it up, on a clock that moves 30 s per reading."""
+    enabled = [k for k in THRESHOLD_OPTIONS if k in selected]
+    settings = WatchSettings(
+        target_of(MR),
+        selected,
+        until=until,
+        timeout=timeout,
+        idle_after=idle_after,
+        threshold_kinds=frozenset(THRESHOLD_OPTIONS),
+        subscribed=CATALOG.daemon_kinds(selected) | frozenset(also_subscribe("mr", enabled)),
+    )
+    clock = Ticks(30.0)
+    timers: list[ClientTimer] = [WatchTimers("mr", thresholds, clock())] if enabled else []
+    status = StatusOutput("glab-watch: ", io.StringIO())
+    changelog = Changelog(tmp_path, MR.key)
+    return Watcher(settings, backend, StdoutSink(out), changelog, status, timers=timers, clock=clock)
 
 
 def test_the_watcher_reports_quiet_without_asking_the_daemon_for_it(tmp_path: Path) -> None:
     started = Event("watch_started", MR.key, 0, "2026-11-09T10:00:00.000Z", {"summary": {}}).to_json()
-    backend = SnapshotBackend(MR, [([started], mr_snapshot())])
+    backend = ScriptedBackend([([started], mr_snapshot())])
     selected = frozenset({"watch_started", "watch_degraded", "watch_ended", "state_changed", "quiet"})
     out = io.StringIO()
-    watcher = Watcher(
-        WatchSettings(MR, selected, "none", "quiet", 600, Thresholds(quiet_after=(120.0,))),
-        backend,
-        StdoutSink(out),
-        Changelog(tmp_path, MR),
-        StatusOutput(io.StringIO()),
-        clock=Clock(),
+    run = watcher(
+        backend, selected, tmp_path, out, thresholds=Thresholds(quiet_after=(120.0,)), until="quiet", timeout=600
     )
-    assert watcher.run() == 0
+    assert run.run() == 0
     lines = [json.loads(line) for line in out.getvalue().splitlines()]
     assert [line["kind"] for line in lines] == ["watch_started", "quiet", "watch_ended"]
     assert lines[1]["data"] == {"after": "2m", "head_sha": HEAD, "pipeline_id": 5001}
@@ -229,31 +200,13 @@ def test_the_watcher_reports_quiet_without_asking_the_daemon_for_it(tmp_path: Pa
     assert {"head_pipeline_changed", "pipeline_status_changed", "pipeline_finished"} <= backend.subscribed
 
 
-def test_idle_counts_from_the_last_reported_event_other_than_a_threshold_event() -> None:
-    timers = WatchTimers("mrs", Thresholds(idle_after=3600.0), now=0)
-    timers.reported([event("mr_updated")], now=1000)
-    assert not timers.idle(4599)
-    assert timers.seconds_until_next(4000) == 600
-    timers.reported([event("quiet"), event("pipeline_stuck")], now=4000)
-    assert timers.idle(4600)
-
-
 def test_the_watcher_ends_idle_after_nothing_was_reported(tmp_path: Path) -> None:
     started = Event("watch_started", MR.key, 0, "2026-11-09T10:00:00.000Z", {"summary": {}}).to_json()
     changed = Event("draft_changed", MR.key, 1, "2026-11-09T10:01:00.000Z", {"draft": False}).to_json()
-    backend = SnapshotBackend(MR, [([started], mr_snapshot(status="running")), ([changed], None)])
+    backend = ScriptedBackend([([started], mr_snapshot(status="running")), ([changed], None)])
     selected = frozenset({"watch_started", "watch_degraded", "watch_ended", "draft_changed"})
     out = io.StringIO()
-    clock = Clock()
-    watcher = Watcher(
-        WatchSettings(MR, selected, "none", None, None, Thresholds(idle_after=300.0)),
-        backend,
-        StdoutSink(out),
-        Changelog(tmp_path, MR),
-        StatusOutput(io.StringIO()),
-        clock=clock,
-    )
-    assert watcher.run() == 0
+    assert watcher(backend, selected, tmp_path, out, thresholds=Thresholds(), idle_after=300.0).run() == 0
     lines = [json.loads(line) for line in out.getvalue().splitlines()]
     assert [line["kind"] for line in lines] == ["watch_started", "draft_changed", "watch_ended"]
     assert lines[-1]["data"] == {"reason": "idle", "idle_after": "5m"}

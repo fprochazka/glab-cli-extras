@@ -319,7 +319,7 @@ HEAVY = (
     "rich",
     "glab_cli_extras.cli",
     "glab_cli_extras.gitlab",
-    "glab_cli_extras.daemon",
+    "cli_watch_kit",
     "glab_cli_extras.watch",
     "glab_cli_extras.status",
     "asyncio",

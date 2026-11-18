@@ -1,4 +1,6 @@
-"""The claude-message stream, against a real Unix socket that reads frames the way a Claude Code session does."""
+"""The claude-message stream of glab-watch on cli-watch-kit, against a real Unix socket that reads frames the way a
+Claude Code session does: the `<glab-watcher>` envelope, the `glab-watch:<pid>` sender and its name, and the
+announcing message's relative threads dir stay what they were before the library."""
 
 from __future__ import annotations
 
@@ -15,20 +17,56 @@ from typing import Any, cast
 
 import pytest
 from cc_blackbox import MessageEventSink, UnsupportedProtocol
+from cli_watch_kit import claude as kit_claude
+from cli_watch_kit.changelog import Changelog
+from cli_watch_kit.claude import StreamError, open_stream
+from cli_watch_kit.sinks import StatusOutput, StdoutSink
 
 from conftest import Clock
 from glab_cli_extras.events import Event
 from glab_cli_extras.gitlab.refs import ResourceRef
-from glab_cli_extras.watch import streams
-from glab_cli_extras.watch.changelog import Changelog
-from glab_cli_extras.watch.claude import claude_message_sink, message_envelope, sender_name
-from glab_cli_extras.watch.sinks import StatusOutput, StdoutSink
+from glab_cli_extras.store.layout import resource_dir
+from glab_cli_extras.watch.app import APP, sender_name
 from test_watcher import REF as WATCHED
-from test_watcher import ScriptedBackend, daemon_event, run
+from test_watcher import daemon_event, run
+from watch_harness import ScriptedBackend
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="Claude Code messaging has no Windows transport")
 
 REF = ResourceRef("mr", "gitlab.example.com", "group/project", 42)
+
+
+def status() -> StatusOutput:
+    return StatusOutput(APP.status_prefix)
+
+
+def claude_message_sink(session: Any, ref: ResourceRef, changelog: Path, priority: str, *_: Any, **kwargs: Any) -> Any:
+    """The sink `glab-watch` gets under a Claude Code session."""
+    return kit_claude.claude_message_sink(
+        APP, session, ref.key, sender_name(ref), changelog, priority, status(), **kwargs
+    )
+
+
+def message_envelope(ref: ResourceRef, changelog: Path) -> Any:
+    return kit_claude.message_envelope(APP, ref.key, changelog)
+
+
+def stream(mode: str, session: Any, priority: str = "next") -> Any:
+    return open_stream(
+        APP,
+        mode,
+        session=session,
+        resource=REF.key,
+        sender_name=sender_name(REF),
+        changelog=Path("events.jsonl"),
+        priority=priority,
+        status=status(),
+    )
+
+
+def files_dir(base: Path | None, session: Any) -> Path:
+    """The resource dir `glab-watch mr` writes, under the session's scratchpad when there is one."""
+    return resource_dir(APP.paths.base_dir(base, getattr(session, "scratchpad_dir", None)), REF)
 
 
 class Receiver:
@@ -96,7 +134,7 @@ def wait_frames(rx: Receiver, count: int) -> list[dict[str, Any]]:
 
 def test_a_burst_goes_out_as_one_message_after_three_seconds(receiver: Receiver, clock: Clock, tmp_path: Path) -> None:
     sink = claude_message_sink(
-        cast(Any, fake_session(receiver.path)), REF, tmp_path / "events.jsonl", "next", StatusOutput(), clock=clock
+        cast(Any, fake_session(receiver.path)), REF, tmp_path / "events.jsonl", "next", status(), clock=clock
     )
     assert "priority next" in sink.describe() and "'glab-watch mr group/project!42'" in sink.describe()
     sink.emit([event("pushed", 3, to="b" * 40)])
@@ -122,9 +160,7 @@ def test_only_the_first_watch_started_message_names_the_dir_and_the_changelog(
     receiver: Receiver, clock: Clock, tmp_path: Path
 ) -> None:
     changelog = tmp_path / "res" / "events.jsonl"
-    sink = claude_message_sink(
-        cast(Any, fake_session(receiver.path)), REF, changelog, "next", StatusOutput(), clock=clock
-    )
+    sink = claude_message_sink(cast(Any, fake_session(receiver.path)), REF, changelog, "next", status(), clock=clock)
     # The third batch is a watch_started repeated after a daemon restart: it announces nothing again.
     res = str(tmp_path / "res")
     started = event(
@@ -148,7 +184,7 @@ def test_only_the_first_watch_started_message_names_the_dir_and_the_changelog(
 
 def test_watch_ended_is_sent_at_once_and_priority_is_passed(receiver: Receiver, clock: Clock, tmp_path: Path) -> None:
     sink = claude_message_sink(
-        cast(Any, fake_session(receiver.path)), REF, tmp_path / "e.jsonl", "later", StatusOutput(), clock=clock
+        cast(Any, fake_session(receiver.path)), REF, tmp_path / "e.jsonl", "later", status(), clock=clock
     )
     sink.emit([event("state_changed", 9, to="merged"), event("watch_ended", 10, reason="merged")])
     frames = wait_frames(receiver, 1)
@@ -158,7 +194,7 @@ def test_watch_ended_is_sent_at_once_and_priority_is_passed(receiver: Receiver, 
 
 def test_a_gone_session_ends_the_watch(receiver: Receiver, clock: Clock, tmp_path: Path) -> None:
     sink = claude_message_sink(
-        cast(Any, fake_session(receiver.path)), REF, tmp_path / "e.jsonl", "next", StatusOutput(), clock=clock
+        cast(Any, fake_session(receiver.path)), REF, tmp_path / "e.jsonl", "next", status(), clock=clock
     )
     receiver.close()
     sink.emit([event("pushed", 1)])
@@ -174,7 +210,7 @@ def test_liveness_is_rechecked_every_30_seconds(receiver: Receiver, clock: Clock
         REF,
         tmp_path / "e.jsonl",
         "next",
-        StatusOutput(),
+        status(),
         clock=clock,
         session_alive=lambda: alive[0],
     )
@@ -199,20 +235,18 @@ def test_sender_name_drops_the_host() -> None:
 
 
 def test_stream_selection(receiver: Receiver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    status = StatusOutput()
-    monkeypatch.setattr(streams, "find_session", lambda: None)
-    plain = streams.open_stream("auto", REF, "next", None, status)
+    plain = stream("auto", None)
     assert isinstance(plain.sink, StdoutSink)
-    assert plain.changelog.dir.is_relative_to(tmp_path / "base")
-    with pytest.raises(streams.StreamError, match="no Claude Code session found"):
-        streams.open_stream("claude-message", REF, "next", None, status)
+    assert files_dir(None, None).is_relative_to(tmp_path / "base")
+    with pytest.raises(StreamError, match="no Claude Code session found"):
+        stream("claude-message", None)
 
     scratchpad = tmp_path / "scratchpad"
     monkeypatch.delenv("GLAB_CLI_EXTRAS_BASE_DIR")
-    monkeypatch.setattr(streams, "find_session", lambda: fake_session(receiver.path, scratchpad))
-    chosen = streams.open_stream("auto", REF, "now", None, status)
+    session = fake_session(receiver.path, scratchpad)
+    chosen = stream("auto", session, "now")
     assert isinstance(chosen.sink, MessageEventSink) and chosen.sink.priority == "now"
-    assert chosen.changelog.events_path == (
+    assert files_dir(None, session) / "events.jsonl" == (
         scratchpad
         / "glab-cli-extras"
         / "gitlab.example.com"
@@ -223,15 +257,17 @@ def test_stream_selection(receiver: Receiver, tmp_path: Path, monkeypatch: pytes
         / "42"
         / "events.jsonl"
     )
-    forced = streams.open_stream("stdout", REF, "next", tmp_path / "explicit", status)
-    assert isinstance(forced.sink, StdoutSink) and forced.changelog.dir.is_relative_to(tmp_path / "explicit")
+    forced = stream("stdout", session)
+    assert isinstance(forced.sink, StdoutSink) and files_dir(tmp_path / "explicit", session).is_relative_to(
+        tmp_path / "explicit"
+    )
 
 
 def test_claude_messages_carry_the_watcher_numbering(tmp_path: Path) -> None:
     backend = ScriptedBackend(
         [[daemon_event("watch_started", 0, summary={}), daemon_event("watch_ended", 0, reason="finished")]]
     )
-    changelog = Changelog(tmp_path, WATCHED)
+    changelog = Changelog(tmp_path, WATCHED.key)
     out = StringIO()
     run(backend, changelog, out)
     events = [Event.from_json(json.loads(line)) for line in out.getvalue().splitlines()]
@@ -246,28 +282,25 @@ def test_an_incompatible_session_falls_back_to_stdout_with_a_reason(
     session.can_receive_messages = False
     reason = "messaging: the record speaks peer protocol 2, and this cc-blackbox version speaks 1."
     session.compatibility = SimpleNamespace(compatible=False, reasons=(reason,))
-    monkeypatch.setattr(streams, "find_session", lambda: session)
-    status = StatusOutput()
-    chosen = streams.open_stream("auto", REF, "next", None, status)
+    chosen = stream("auto", session)
     assert isinstance(chosen.sink, StdoutSink)
     assert chosen.fallback is not None and "peer protocol 2" in chosen.fallback
-    # The changelog still goes to the scratchpad: only messaging is incompatible.
-    assert chosen.changelog.dir.is_relative_to(tmp_path / "scratchpad")
-    with pytest.raises(streams.StreamError, match="peer protocol 2"):
-        streams.open_stream("claude-message", REF, "next", None, status)
+    # The files still go to the scratchpad: only messaging is incompatible.
+    assert files_dir(None, session).is_relative_to(tmp_path / "scratchpad")
+    with pytest.raises(StreamError, match="peer protocol 2"):
+        stream("claude-message", session)
 
 
 def test_a_session_without_a_live_record_falls_back_to_stdout_with_a_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", str(tmp_path / "123.sock"))
-    monkeypatch.setattr(streams, "find_session", lambda: None)
-    chosen = streams.open_stream("auto", REF, "next", tmp_path / "out", StatusOutput())
+    chosen = stream("auto", None)
     assert isinstance(chosen.sink, StdoutSink)
     assert chosen.fallback is not None and "no live session record" in chosen.fallback
 
     monkeypatch.delenv("CLAUDE_CODE_MESSAGING_SOCKET")
-    assert streams.open_stream("auto", REF, "next", tmp_path / "out", StatusOutput()).fallback is None
+    assert stream("auto", None).fallback is None
 
 
 class RefusingSender:
@@ -292,7 +325,7 @@ def test_a_protocol_change_mid_run_moves_events_to_stdout(
         REF,
         tmp_path / "e.jsonl",
         "next",
-        StatusOutput(),
+        status(),
         clock=clock,
         rate_limiter=cast(Any, sender),
     )

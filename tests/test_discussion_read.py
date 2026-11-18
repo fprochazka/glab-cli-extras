@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cli_watch_kit.sinks import StatusOutput
 
 from conftest import Clock
 from fakeglab import FakeGlab, Route
@@ -19,7 +20,6 @@ from glab_cli_extras.gitlab.client import GitLabClient
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.serde import to_jsonable
 from glab_cli_extras.sync.mr import parse_mr, parse_threads
-from glab_cli_extras.watch.sinks import StatusOutput
 from glab_cli_extras.watch.writer import ResourceWriter
 from shapes import HOST, PROJECT, gql_mr, gql_thread, rest_discussion
 
@@ -151,7 +151,13 @@ def test_a_read_after_a_watch_finds_the_watchs_files_current(
 
     node = gql_mr(threads=gitlab.threads)["project"]["mergeRequest"]
     snapshot = to_jsonable(parse_mr(node, PROJECT, parse_threads(node["discussions"]["nodes"])))
-    watch = ResourceWriter(tmp_path / "base", ResourceRef("mr", HOST, PROJECT, 42), Daemon(), "failed", StatusOutput())  # type: ignore[arg-type]
+    watch = ResourceWriter(
+        tmp_path / "base",
+        ResourceRef("mr", HOST, PROJECT, 42),
+        Daemon(),  # type: ignore[arg-type]
+        "failed",
+        StatusOutput("glab-watch: "),
+    )
     watch.snapshot(snapshot)
     written = {p.name: p.read_bytes() for p in threads_dir(tmp_path).glob("*.txt")}
 

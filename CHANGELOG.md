@@ -4,7 +4,26 @@
 
 Changed:
 
+- `glab-watch` runs on [cli-watch-kit](https://github.com/fprochazka/cli-watch-kit) 0.1.1, the library extracted from it. The events, their data, the options, the files, the `<glab-watcher>` messages, the sender `glab-watch:<pid>`, the exit codes and the `GLAB_CLI_EXTRAS_*` variables stay the same. What differs:
+  - A second watcher of the same resource into the same base dir waits up to 5 s for the first one to finish, then exits with 1 and says so, instead of writing the same `events.jsonl` as the first one. Watchers in different base dirs, such as two Claude Code sessions, still share one poller. Each resource dir gets a `.watcher.lock` file. A watcher of glab-watch 0.9.4 that still runs after the upgrade takes no such lock, so a new watcher into its dir is not refused.
+  - In the startup header, `state:` comes after `changelog:`, and `logs:` before `events:`. A pipeline watch's `restart with:` line names `--logs=failed|all|none` before `--events`.
+  - New status lines: `subscribing again failed: …; trying again in …`, `… polling again (3 in a row and the daemon is replaced)`, and `the event stream stopped taking events; they are in the changelog`.
+  - `glab-watch daemon status` prints the library's format: an `account <host>` line per GitLab host, the request counts on a `source:` line, and the protocols of both. `--json` has the library's shape. A daemon that holds its lock but answers nothing shows as running but not answering, and `daemon stop` kills it.
+  - The daemon is `python -m glab_cli_extras.watch.daemon`, and its files in the state dir are `daemon-l1-a5.{sock,lock,log}`. A daemon of an earlier glab-watch (`daemon-v4.*`) keeps serving the watchers started before the upgrade and exits once they end; `glab-watch daemon status|stop|logs` see only the new one.
+  - A `pushed` that a watcher learns from its own baseline after a daemon restart, while another watcher already brought the MR back, has `forced: null`.
+  - A watcher of glab-watch 0.9.4 that still runs after the upgrade cannot start its `daemon-v4` daemon again once that one ends; restart it with the new glab-watch.
+  - A `--timeout` of zero or less is a usage error (exit 2), as `--idle-after` already was, and an error about `--timeout` names the option first: `error: --timeout: …`.
 - Needs cc-blackbox 0.11 or 0.12.
+
+Fixed:
+
+- After a daemon restart, every watcher of a shared resource gets the changes made while the daemon was down, not only the first one to come back. A watcher that comes back after another one gets them from a diff of its baseline against the current snapshot. That snapshot follows the filters of the watchers that came back first, so it can lack thread, external status or pipeline events, and its `job_finished` events carry no `log_truncated` and no `after_push`. Leases run on a monotonic clock, so a suspend no longer expires them, and a failed resubscribe is retried instead of ending the watch.
+- A 404 right after a daemon restart degrades the watch instead of ending it.
+- A poll that failed after GitLab answered no longer leaves its resource unpolled for good, and a bug in one poller no longer stops the daemon's loop.
+- `glab-watch daemon stop` no longer waits for an open connection, and a daemon that cannot start says why in its log.
+- When the budget runs short, poll intervals stretch at most until GitLab resets the limit, and the daemon sleeps instead of checking 20 times a second.
+- A stop signal ends a watcher whose stdout is no longer read.
+- The daemon's log and the private temp dir are checked for their owner and mode.
 
 ## 0.9.4 (2026-11-16)
 

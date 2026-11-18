@@ -111,6 +111,11 @@ download.log   one line per file: OK, SKIP (another file maps to the same output
 }
 
 
+def readme_text(kind: str) -> str | None:
+    """The README.txt of a resource dir of this kind, or None for a kind without one."""
+    return _README.get(kind)
+
+
 def ensure_readme(directory: Path, kind: str) -> None:
     """Write the dir's README.txt once, so an agent that lands in the dir learns what is in it."""
     path = directory / README_FILE

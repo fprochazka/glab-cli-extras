@@ -104,7 +104,7 @@ Ask before acting on a product or design decision, an auth or install problem, a
 
 ## Stopping
 
-Stop a watcher by stopping its background task (the task stop tool, or SIGTERM). It also ends on its resource's end, `--until`, `--timeout`, `--idle-after`, and when the session ends. To change a filter, stop the watcher and start the `restart with:` command. Never leave two watchers on the same resource with the same filter.
+Stop a watcher by stopping its background task (the task stop tool, or SIGTERM). It also ends on its resource's end, `--until`, `--timeout`, `--idle-after`, and when the session ends. To change a filter, stop the watcher and start the `restart with:` command. One watcher per resource in this session: a second one of the same resource exits at start with "another watcher already watches …". Widen the filter of the one watcher instead. Watchers of the same resource in other sessions are fine; they share the daemon's polling.
 
 ## The files
 
@@ -114,7 +114,7 @@ Each resource has one dir under the session scratchpad, mirroring its GitLab URL
 - In a pipeline's dir, `job-logs/`: one file per job, the log or a placeholder that says how to download it; and the `glab-pipeline inspect` dump once the pipeline finished.
 - In an MR's dir, `threads/`: one file per thread, in glab-discussion's format.
 
-`glab-watch daemon status` shows the shared daemon's subscriptions and API budget; `glab-watch daemon logs` its log.
+`glab-watch daemon status` shows the shared daemon's subscriptions and API budget, or that it runs but does not answer; `glab-watch daemon logs` shows its log. `glab-watch daemon stop` also ends a daemon that does not answer.
 
 ## Limits
 

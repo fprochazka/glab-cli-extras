@@ -153,7 +153,6 @@ def test_poller_fetches_only_the_threads_that_changed_into_the_cache(clock: Cloc
     assert asyncio.run(poller.poll()) == []
     assert [e for e in fake.endpoints() if "/statuses" not in e] == ["graphql"]
     assert poller.summary()["threads"]["unresolved"] == 1
-    assert poller.children() == frozenset()
 
     thread_b = gql_thread("bbb222", [(7, "2026-11-09T10:00:00Z", "reviewer-two")])
     fake.routes[0] = Route("MergeRequestSnapshot", {"data": gql_mr(threads=[thread_a, thread_b], head_sha=SHA2)})
@@ -194,7 +193,6 @@ def test_filter_without_comments_or_pipeline_saves_the_work(clock: Clock, tmp_pa
     asyncio.run(poller.poll())
     sent = fake.calls[0].variables
     assert sent["withThreads"] is False and sent["withPipeline"] is False
-    assert poller.children() == frozenset()
     assert len(fake.calls) == 1
 
 

@@ -3,37 +3,43 @@
 from __future__ import annotations
 
 import json
-import re
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, NoReturn
 
 import typer
+from cli_watch_kit.claude import MESSAGE_PRIORITIES, STREAM_MODES
+from cli_watch_kit.cli import WatchOptions, format_status
+from cli_watch_kit.cli import run_watch as kit_run_watch
+from cli_watch_kit.client import BackendError, WriterContext
+from cli_watch_kit.daemon.lifecycle import daemon_running, stop_daemon
+from cli_watch_kit.daemon.transport import DaemonFiles, DaemonTimeout, DaemonUnavailable, request
+from cli_watch_kit.durations import parse_duration
+from cli_watch_kit.sinks import StatusOutput
 
 from glab_cli_extras import __version__
 from glab_cli_extras.cli.stdio import force_utf8_stdio
-from glab_cli_extras.daemon.lifecycle import daemon_running, stop_daemon
-from glab_cli_extras.daemon.transport import DaemonFiles, DaemonUnavailable, request
 from glab_cli_extras.events import (
-    GROUPS,
+    CATALOG,
     KINDS_BY_RESOURCE,
-    LIFECYCLE_KINDS,
+    MR_PIPELINE_KINDS,
     PIPELINE_STUCK,
     QUIET,
-    THRESHOLD_OPTIONS,
     FilterError,
-    resolve_filter,
 )
 from glab_cli_extras.gitlab.glab import GlabNotFoundError
 from glab_cli_extras.gitlab.refs import RefError, ResourceRef, parse_id_ref, parse_repo_ref
+from glab_cli_extras.paths import base_dir as default_base_dir
+from glab_cli_extras.store.layout import readme_text, resource_dir
 from glab_cli_extras.sync.job_logs import LOGS_MODES, LogsMode
-from glab_cli_extras.watch.changelog import Changelog
-from glab_cli_extras.watch.client import Backend, BackendError, Watcher, WatchSettings, default_backend
-from glab_cli_extras.watch.sinks import Sink, StatusOutput
-from glab_cli_extras.watch.streams import MESSAGE_PRIORITIES, STREAM_MODES, StreamError, open_stream
-from glab_cli_extras.watch.timers import Thresholds, format_duration
-from glab_cli_extras.watch.writer import ResourceWriter
+from glab_cli_extras.watch.app import APP, sender_name
+from glab_cli_extras.watch.source import ref_of, target_of
+from glab_cli_extras.watch.timers import Thresholds, WatchTimers
+from glab_cli_extras.watch.writer import DaemonFetches, ResourceWriter
+
+__all__ = ["also_subscribe", "app", "main", "parse_duration", "restart_ref"]
 
 EXIT_USAGE = 2
 
@@ -133,32 +139,13 @@ StuckAfterOpt = Annotated[
 ]
 LogsOpt = Annotated[str, typer.Option("--logs", help="Which finished jobs get their log fetched: failed, all or none.")]
 
-_DURATION_RE = re.compile(r"^(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+)s)?$")
 
-
-def parse_duration(value: str) -> float:
-    text = value.strip().lower()
-    if text.replace(".", "", 1).isdigit():
-        return float(text)
-    match = _DURATION_RE.match(text)
-    if not text or not match or not any(match.groupdict().values()):
-        raise ValueError(f"cannot read the duration {value!r}; use for example 90s, 30m, 2h or 1h30m")
-    parts = {k: int(v) if v else 0 for k, v in match.groupdict().items()}
-    return float(parts["h"] * 3600 + parts["m"] * 60 + parts["s"])
-
-
-def _threshold(option: str, value: str) -> float:
-    try:
-        seconds = parse_duration(value)
-    except ValueError as exc:
-        _fail(f"{option}: {exc}")
-    if seconds <= 0:
-        _fail(f"{option}: the duration must be longer than zero")
-    return seconds
+def _status() -> StatusOutput:
+    return StatusOutput(APP.status_prefix)
 
 
 def _fail(message: str, code: int = EXIT_USAGE) -> NoReturn:
-    StatusOutput(sys.stderr).line(f"error: {message}")
+    _status().line(f"error: {message}")
     raise typer.Exit(code)
 
 
@@ -174,51 +161,30 @@ def restart_ref(ref: ResourceRef) -> str:
     return base
 
 
-def print_header(
-    status: StatusOutput,
-    ref: ResourceRef,
-    sink: Sink,
-    changelog: Changelog,
-    events: frozenset[str],
-    logs: LogsMode | None,
-    backend: Backend,
-    until: str | None,
-    timeout: str | None,
-    fallback: str | None = None,
-    thresholds: Thresholds | None = None,
-) -> None:
-    """The startup header: what is watched, how events are delivered, and how to restart with other options."""
-    # A threshold kind without its option is not tracked at all, rather than ignored.
-    tracked = [k for k in KINDS_BY_RESOURCE[ref.kind] if k not in THRESHOLD_OPTIONS or k in events]
-    subscribed = [k for k in tracked if k in events]
-    ignored = [k for k in tracked if k not in events]
-    status.line(f"resource: {ref.key}")
-    status.line(f"stream: {sink.describe()}")
-    if fallback:
-        status.line(f"stream fallback: not messaging the Claude Code session: {fallback}")
-    status.line(f"dir: {changelog.dir}")
+def also_subscribe(kind: str, enabled: list[str]) -> list[str]:
+    """What the daemon must track for the threshold events without the watcher reporting it: `quiet` and
+    `pipeline_stuck` of an MR read the head pipeline from the MR snapshot, which then has to carry it."""
+    return ["head_pipeline_changed", *MR_PIPELINE_KINDS] if kind == "mr" and enabled else []
+
+
+def _duration(option: str, value: str) -> float:
+    try:
+        seconds = parse_duration(value)
+    except ValueError as exc:
+        _fail(f"{option}: {exc}")
+    if seconds <= 0:
+        _fail(f"{option}: the duration must be longer than zero")
+    return seconds
+
+
+def _header(ref: ResourceRef, base: Path | None, logs: str | None) -> list[str]:
+    """glab-watch's own header lines: the dir's `state.json` and the `--logs` mode."""
+    lines = []
     if ref.kind in ("mr", "pipeline"):
-        status.line(f"state: {changelog.dir / 'state.json'}")
-    status.line(f"changelog: {changelog.events_path}")
-    status.line(f"events: {','.join(subscribed) or '(none)'} (always: {','.join(LIFECYCLE_KINDS)})")
-    status.line(f"ignored: {','.join(ignored) or '(none)'}")
-    described = thresholds.describe() if thresholds else []
-    if described:
-        status.line(f"thresholds: {'; '.join(described)}")
+        lines.append(f"state: {resource_dir(default_base_dir(base), ref) / 'state.json'}")
     if logs is not None:
-        status.line(f"logs: {logs}")
-    idle_after = thresholds.idle_after if thresholds else None
-    ends = [f"on {until}"] if until else []
-    ends += [f"after {timeout}"] if timeout else []
-    ends += [f"after {format_duration(idle_after)} without an event"] if idle_after else []
-    if ends:
-        status.line(f"ends: {' or '.join(ends)}")
-    status.line(f"daemon: {backend.describe()}")
-    groups = ", ".join(f"{name}" for name in GROUPS if name != "lifecycle" and set(GROUPS[name]) & set(tracked))
-    options = "--events=<kinds|groups> --exclude-events=<kinds|groups>"
-    if logs is not None:
-        options += " --logs=failed|all|none"
-    status.line(f"restart with: glab-watch {ref.kind} {restart_ref(ref)} {options} (groups: {groups})")
+        lines.append(f"logs: {logs}")
+    return lines
 
 
 def run_watch(
@@ -238,6 +204,7 @@ def run_watch(
     stuck_after: str | None = None,
     idle_after: str | None = None,
 ) -> None:
+    """Check every option before anything starts (no glab call, no daemon), then run the watch on cli-watch-kit."""
     if events_stream not in STREAM_MODES:
         _fail(f"--events-stream must be one of {', '.join(STREAM_MODES)}")
     if message_priority not in MESSAGE_PRIORITIES:
@@ -245,65 +212,63 @@ def run_watch(
     if logs is not None and logs not in LOGS_MODES:
         _fail(f"--logs must be one of {', '.join(LOGS_MODES)}")
     thresholds = Thresholds(
-        quiet_after=tuple(sorted({_threshold("--quiet-after", v) for v in quiet_after or ()})),
-        stuck_after=_threshold("--stuck-after", stuck_after) if stuck_after else None,
-        idle_after=_threshold("--idle-after", idle_after) if idle_after else None,
+        quiet_after=tuple(sorted({_duration("--quiet-after", v) for v in quiet_after or ()})),
+        stuck_after=_duration("--stuck-after", stuck_after) if stuck_after else None,
     )
     enabled = ([QUIET] if thresholds.quiet_after else []) + ([PIPELINE_STUCK] if thresholds.stuck_after else [])
     try:
-        selected = resolve_filter(kind, events, exclude_events, enabled)
+        selected = CATALOG.resolve(kind, events, exclude_events, enabled)
     except FilterError as exc:
         _fail(str(exc))
     if until is not None and until not in KINDS_BY_RESOURCE[kind]:
         _fail(f"--until: a {kind} watch never produces {until!r}")
     if until is not None and until not in selected:
         _fail(f"--until={until} is filtered out by --events/--exclude-events")
-    try:
-        timeout_s = parse_duration(timeout) if timeout else None
-    except ValueError as exc:
-        _fail(str(exc))
+    for option, value in (("--timeout", timeout), ("--idle-after", idle_after)):
+        if value is not None:
+            _duration(option, value)
     try:
         ref = resolve()
     except (RefError, GlabNotFoundError) as exc:
         _fail(str(exc))
 
-    status = StatusOutput()
-    try:
-        stream = open_stream(events_stream, ref, message_priority, base_dir, status)
-    except StreamError as exc:
-        _fail(str(exc))
-    changelog = stream.changelog
     logs_mode: LogsMode = logs if logs in LOGS_MODES else "failed"
-    try:
-        backend = default_backend(no_daemon)
-    except (DaemonUnavailable, TimeoutError) as exc:
-        _fail(f"cannot start the daemon: {exc}; retry with --no-daemon to poll without it", 1)
-    print_header(
-        status,
-        ref,
-        stream.sink,
-        changelog,
-        selected,
-        logs if logs is not None else None,
-        backend,
-        until,
-        timeout,
-        stream.fallback,
-        thresholds,
+    options = WatchOptions(
+        events=tuple(events or ()),
+        exclude_events=tuple(exclude_events or ()),
+        until=until,
+        timeout=timeout,
+        idle_after=idle_after,
+        events_stream=events_stream,
+        message_priority=message_priority,
+        base_dir=base_dir,
+        no_daemon=no_daemon,
     )
-    writer = ResourceWriter(changelog.base, ref, backend, logs_mode, status)
-    watcher = Watcher(
-        WatchSettings(ref, selected, logs_mode, until, timeout_s, thresholds),
-        backend,
-        stream.sink,
-        changelog,
-        status,
+    timers = [WatchTimers(kind, thresholds, time.monotonic())] if enabled else []
+    also = also_subscribe(kind, enabled)
+    restart = f"glab-watch {kind} {restart_ref(ref)}" + (" --logs=failed|all|none" if logs is not None else "")
+
+    def writer(context: WriterContext) -> ResourceWriter:
+        return ResourceWriter(
+            context.base_dir, ref_of(context.target), DaemonFetches(context.backend), logs_mode, context.status
+        )
+
+    code = kit_run_watch(
+        APP,
+        target_of(ref),
+        options,
+        source_options={"logs": logs_mode} if kind == "pipeline" else None,
+        enabled_thresholds=enabled,
+        also_subscribe=also,
+        timers=timers,
         writer=writer,
+        resource_dir=lambda base, target: resource_dir(base, ref_of(target)),
+        readme=readme_text(kind),
+        sender_name=sender_name(ref),
+        restart=restart,
+        header=_header(ref, base_dir, logs),
+        status=_status(),
     )
-    try:
-        code = watcher.run()
-    finally:
-        backend.close()
     raise typer.Exit(code)
 
 
@@ -443,49 +408,33 @@ def daemon_status(
     as_json: Annotated[bool, typer.Option("--json", help="Print the raw status object.")] = False,
 ) -> None:
     """Show the daemon's subscriptions, resources, budgets and request counts."""
-    files = DaemonFiles.default()
+    files = DaemonFiles.for_app(APP)
     try:
         response = request(files, {"op": "status"}, timeout=5)
-    except DaemonUnavailable:
-        running = daemon_running(files)
-        typer.echo("daemon: not running" if not running else "daemon: running but not answering; see daemon logs")
-        raise typer.Exit(0 if not running else 1) from None
+    except (DaemonUnavailable, DaemonTimeout):
+        if not daemon_running(files):
+            typer.echo("daemon: not running")
+            raise typer.Exit(0) from None
+        pid = files.owner_pid()
+        typer.echo(
+            f"daemon: running (pid {pid if pid is not None else 'unknown'}) but not answering; see"
+            " `glab-watch daemon logs`, and `glab-watch daemon stop` ends it"
+        )
+        raise typer.Exit(1) from None
     if as_json:
         typer.echo(json.dumps(response, indent=2))
         return
-    _print_status(response, files)
-
-
-def _print_status(status: dict[str, Any], files: DaemonFiles) -> None:
-    typer.echo(
-        f"daemon: pid {status['pid']}, version {status['version']}, protocol {status['protocol']}, "
-        f"up {status['uptime_s']} s, endpoint {files.describe_endpoint()}"
-    )
-    for sub in status.get("subscriptions", []):
-        typer.echo(
-            f"subscription {sub['id'][:8]} client {sub['client_id'][:8]} {sub['resource']} "
-            f"(lease idle {sub['idle_s']} s, logs {sub['logs']})"
-        )
-    for res in status.get("resources", []):
-        state = "ended" if res["ended"] else (f"degraded: {res['degraded']}" if res["degraded"] else "active")
-        typer.echo(
-            f"resource {res['resource']}: {state}, {res['polls']} polls, seq {res['seq']}, "
-            f"next poll in {res['next_poll_in_s']} s"
-        )
-    for host, info in status.get("hosts", {}).items():
-        requests, budget = info["requests"], info["budget"]
-        typer.echo(
-            f"host {host}: {requests['requests']} requests ({requests['not_modified']} not modified), "
-            f"budget {budget['rate_per_minute']}/min, remaining {budget['remaining']}"
-        )
+    for line in format_status(response, files):
+        typer.echo(line)
 
 
 @daemon_app.command("stop")
 def daemon_stop() -> None:
     """Stop the daemon. Running watchers start a new one on their next poll."""
-    files = DaemonFiles.default()
+    files = DaemonFiles.for_app(APP)
     try:
-        stopped = stop_daemon(files)
+        # A daemon that does not stop by itself (a hung one) is killed, once its pid is verified.
+        stopped = stop_daemon(files, APP.env_float("STOP_TIMEOUT", 10.0), kill=APP)
     except DaemonUnavailable as exc:
         _fail(str(exc), 1)
     typer.echo("daemon: stopped" if stopped else "daemon: not running")
@@ -496,7 +445,7 @@ def daemon_logs(
     lines: Annotated[int, typer.Option("--lines", "-n", help="How many lines from the end.")] = 50,
 ) -> None:
     """Print the end of the daemon's log file."""
-    files = DaemonFiles.default()
+    files = DaemonFiles.for_app(APP)
     try:
         content = files.log.read_text(encoding="utf-8", errors="replace").splitlines()
     except FileNotFoundError:
@@ -512,5 +461,5 @@ def main() -> None:
     try:
         app()
     except (BackendError, DaemonUnavailable) as exc:
-        StatusOutput(sys.stderr).line(f"error: {exc}")
+        _status().line(f"error: {exc}")
         sys.exit(1)

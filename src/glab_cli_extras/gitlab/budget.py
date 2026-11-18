@@ -110,13 +110,6 @@ class HostBudget:
         self.rate_limited_count += 1
         self.tokens = min(self.tokens, 0.0)
 
-    def stretch_factor(self, demand_per_second: float, now: float) -> float:
-        """How much every poll interval on this host must grow so the total demand fits the allowance."""
-        rate = self.rate(now)
-        if demand_per_second <= rate:
-            return 1.0
-        return demand_per_second / rate
-
     @property
     def premium_level(self) -> bool:
         """Whether the per-minute limit looks like a paid gitlab.com tier or a generous self-managed throttle."""

@@ -8,8 +8,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cli_watch_kit import client
+from cli_watch_kit.client import BackendError, DaemonBackend
+from cli_watch_kit.daemon.transport import DaemonFiles, DaemonMismatch
+from cli_watch_kit.sinks import StatusOutput
 
-from glab_cli_extras.daemon.transport import DaemonFiles, DaemonMismatch
 from glab_cli_extras.events import Event
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.serde import to_jsonable
@@ -17,10 +20,8 @@ from glab_cli_extras.store.job_logs import PLACEHOLDER_MARKER
 from glab_cli_extras.sync.job_logs import LogContent
 from glab_cli_extras.sync.mr import parse_mr, parse_threads
 from glab_cli_extras.sync.pipeline import parse_pipeline
-from glab_cli_extras.watch import client
-from glab_cli_extras.watch.client import BackendError, DaemonBackend
-from glab_cli_extras.watch.sinks import StatusOutput
-from glab_cli_extras.watch.writer import ResourceWriter
+from glab_cli_extras.watch.app import APP
+from glab_cli_extras.watch.writer import DaemonFetches, ResourceWriter
 from shapes import HOST, PROJECT, gql_job, gql_mr, gql_pipeline, gql_thread, rest_discussion
 
 MR = ResourceRef("mr", HOST, PROJECT, 42)
@@ -52,7 +53,7 @@ def event(kind: str, **data: Any) -> Event:
 
 
 def writer(tmp_path: Path, backend: FakeBackend, ref: ResourceRef = MR) -> ResourceWriter:
-    return ResourceWriter(tmp_path, ref, backend, "failed", StatusOutput(io.StringIO()))  # type: ignore[arg-type]
+    return ResourceWriter(tmp_path, ref, backend, "failed", StatusOutput("glab-watch: ", io.StringIO()))  # type: ignore[arg-type]
 
 
 def test_mr_snapshot_writes_state_and_only_the_threads_whose_notes_changed(tmp_path: Path) -> None:
@@ -208,18 +209,21 @@ def test_a_daemon_that_does_not_know_a_request_is_reported_once_as_watch_degrade
     assert [e.kind for e in w.attach([failed])] == ["job_finished"]
 
 
-def test_the_daemon_backend_turns_an_unknown_op_into_a_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_daemon_fetches_turn_an_unknown_op_into_a_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = DaemonBackend.__new__(DaemonBackend)
-    backend.files, backend.hello, backend._shutting_down = (
+    backend.app, backend.files, backend.hello, backend._shutting_down = (
+        APP,
         DaemonFiles(Path("unused")),
-        {"pid": 7, "version": "0.1.0"},
+        {"pid": 7, "app_version": "0.1.0"},
         False,
     )
+    backend.timeout, backend._timeouts = 10.0, 0
+    fetches = DaemonFetches(backend)
     monkeypatch.setattr(
         client, "request", lambda files, payload, timeout: {"ok": False, "error": "unknown op 'fetch_dump'"}
     )
     with pytest.raises(DaemonMismatch, match=r"pid 7, glab-cli-extras 0\.1\.0.*glab-watch daemon stop"):
-        backend.fetch_dump(PIPELINE)
+        fetches.fetch_dump(PIPELINE)
     monkeypatch.setattr(client, "request", lambda files, payload, timeout: {"ok": False, "error": "lease expired"})
     with pytest.raises(BackendError, match="lease expired"):
-        backend.fetch_dump(PIPELINE)
+        fetches.fetch_dump(PIPELINE)
