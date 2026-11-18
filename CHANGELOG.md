@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Changed:
+
+- Needs cc-blackbox 0.11 or 0.12.
+
 ## 0.9.4 (2026-11-16)
 
 Changed:
