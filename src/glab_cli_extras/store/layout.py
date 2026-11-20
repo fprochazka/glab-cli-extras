@@ -39,7 +39,16 @@ def search_dir(base: Path, host: str, stamp: str, query: str) -> Path:
     return base / sanitize_part(host) / "-" / "search" / f"{stamp}-{sanitize_part(query)[:60]}-{digest}"
 
 
+def dashboard_dir(base: Path, host: str, layout: str | None = None) -> Path:
+    """`<base>/<host>/dashboard/merge_requests/`, as the dashboard's URL; a watch that pins a layout gets a subdir.
+    `dashboard` is a reserved top-level path on GitLab, so no group can collide with it."""
+    directory = base / sanitize_part(host) / "dashboard" / "merge_requests"
+    return directory / f"layout-{sanitize_part(layout)}" if layout else directory
+
+
 def resource_dir(base: Path, ref: ResourceRef) -> Path:
+    if ref.kind == "my-mrs":
+        return dashboard_dir(base, ref.host, ref.layout)
     if ref.kind == "pipeline":
         assert ref.id is not None
         return pipeline_dir(base, ref.host, ref.project, ref.id)
@@ -93,6 +102,14 @@ The head pipeline's files are in ../../pipelines/<pipeline id>/.
 baseline.json  the last state the watcher saw, used after a daemon restart
 
 Each merge request has its own dir next to these files: <iid>/.
+""",
+    "my-mrs": """Your GitLab merge request dashboard (https://<host>/dashboard/merge_requests), as glab-watch my-mrs
+sees it.
+
+state.json     the dashboard's lists now, in the shape glab-my-mrs --json prints: each list with its merge requests,
+               their reviewers' states, head pipeline status and merge status; only the lists the watch reports
+events.jsonl   every event glab-watch reported for the dashboard, one JSON object per line
+baseline.json  the last state the watcher saw, used after a daemon restart
 """,
     "branch": """events.jsonl   every event glab-watch reported for this branch, one JSON object per line
 baseline.json  the last state the watcher saw, used after a daemon restart

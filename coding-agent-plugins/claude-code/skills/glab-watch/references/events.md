@@ -56,6 +56,21 @@ An MR watch reports its head pipeline at the pipeline level only; job events and
 
 `mr_opened`, `mr_updated`, `mr_merged`, `mr_closed`, `mr_reopened`, all in the `status` group. When the list shows what moved, `changes` maps a field to `[old, new]` for `title`, `draft`, `target_branch`, `sha`, `detailed_merge_status`, `labels`, `assignees` and `reviewers`.
 
+## `glab-watch my-mrs`
+
+Every event about an MR has `reference` (`group/project!123`), `project`, `iid`, `title`, `state`, `author`, `source_branch`, `target_branch`, `draft`, `web_url`, `updated_at`, and `lists`: the dashboard lists the MR is in now, `{"author": <list id> | null, "reviewer": <list id> | null}`. All kinds are in the `status` group.
+
+| Kind | Data | Reaction |
+|---|---|---|
+| `list_changed` | `side`, `from`, `to`; `reason` when `to` is null: `unassigned`, `review_request_removed`, `hidden`, `gone` | `to: reviews_requested`: someone asked for your review. `to: returned_to_you`: a reviewer left feedback on your MR. |
+| `review_state_changed` | `reviewer`, `from`, `to` (lowercased review states), `at` | Name the reviewer and whether it is a human or an AI reviewer. The `list_changed` it causes is in the same batch. |
+| `mr_updated` | `changes` for `title`, `draft`, `target_branch`, `sha`, `detailed_merge_status`, `labels`, `assignees`, `reviewers`, `pipeline_status` | `pipeline_status` to `failed` on your MR: start `glab-watch mr` or run `glab-pipeline inspect`. |
+| `mr_opened` | | An MR created after the watch started. |
+| `mr_merged` | `merged_at`, `merged_list` | Reported once. |
+| `mr_closed` | | |
+
+`watch_started.summary` has `layout`, `show_drafts`, the count of each list in `lists`, the Merged tab's counts in `merged_2_weeks`, `state` (the `state.json` with the lists), and a `warning` when the host has no `GitLabDuo` user.
+
 ## `glab-watch branch`
 
 `pushed` and `force_pushed` (a merge commit has `merge_commit: true` and, when GitLab knows it, `merged_mr_iid`), `created`, `deleted` (group `push`), `pipeline_created`, `pipeline_finished` (group `pipeline`).

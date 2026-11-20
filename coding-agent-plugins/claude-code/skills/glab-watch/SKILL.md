@@ -3,20 +3,21 @@ name: glab:glab-watch
 description: >-
   This skill should be used when the session has to wait for something on GitLab or react to it as it
   happens: "watch this MR", "wait for the pipeline", "tell me when CI finishes", "let me know when someone
-  comments", "watch the branch", "watch every MR of the project", "babysit the MR", or when a
+  comments", "watch the branch", "watch every MR of the project", "babysit the MR", "watch my merge
+  requests", "watch my dashboard", "tell me when someone asks for my review", or when a
   `<glab-watcher>` message arrives. Covers starting glab-watch in the background, its startup
   header, event filters, reacting to its messages, stopping it, and the files it writes.
-trigger-keywords: glab-watch, watch mr, wait for pipeline, wait for ci, glab-watcher
-allowed-tools: ["Bash(glab-watch --help)", "Bash(glab-watch daemon status:*)", "Bash(glab-watch daemon logs:*)", "Bash(glab-mr-status:*)"]
+trigger-keywords: glab-watch, watch mr, wait for pipeline, wait for ci, glab-watcher, my-mrs, review requests
+allowed-tools: ["Bash(glab-watch --help)", "Bash(glab-watch daemon status:*)", "Bash(glab-watch daemon logs:*)", "Bash(glab-mr-status:*)", "Bash(glab-my-mrs:*)"]
 ---
 
 # glab-watch
 
-`glab-watch` watches a merge request, a pipeline, every MR of a project, or a branch, and reports each change as an event. Under Claude Code, the events arrive in this conversation as messages, so the session learns about a push, a comment or a finished pipeline without asking. It comes with glab-cli-extras (`uv tool install glab-cli-extras`).
+`glab-watch` watches a merge request, a pipeline, every MR of a project, a branch, or your merge request dashboard, and reports each change as an event. Under Claude Code, the events arrive in this conversation as messages, so the session learns about a push, a comment or a finished pipeline without asking. It comes with glab-cli-extras (`uv tool install glab-cli-extras`).
 
 ## Watch or read once
 
-- "What is it now?": run `glab-mr-status` or `glab-pipeline inspect`. One read, one answer. `glab-mr-status --help` describes its output.
+- "What is it now?": run `glab-mr-status` or `glab-pipeline inspect`. One read, one answer. `glab-mr-status --help` describes its output. For your dashboard's lists (your MRs, your review requests) run `glab-my-mrs`, with the same `--list` and `--side` as the watch.
 - "Tell me when it changes": start a watcher. **Never poll** with `sleep`, a loop, or repeated reads: a watcher costs a fraction of the API budget and reports the change within seconds of the next poll.
 
 ## Starting a watcher
@@ -28,8 +29,10 @@ glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123
 glab-watch pipeline https://gitlab.example.com/group/project/-/pipelines/4567 --until=finished
 glab-watch mrs group/project --events=status
 glab-watch branch group/project main
+glab-watch my-mrs gitlab.example.com
 ```
 
+- **`my-mrs`** watches `https://<host>/dashboard/merge_requests` across projects: MRs entering or leaving its lists, reviewers' review states, merges, and pipeline and other changes of the MRs in it. It takes a host or any URL on it; without one, the host of the current directory's repo, else glab's default host. It reads the dashboard every `--interval`, `15m` by default and at least `1m`. `--list=<ids>` and `--side=author|reviewer` report only MRs in those lists, before or after the change; `glab-my-mrs --help` names the lists. It runs until stopped.
 - **Refs**: an MR or pipeline URL, `group/project!123`, `!123` or `123` with the repo of the current directory. Use URLs when the set spans repos or hosts: outside a checkout, glab falls back to its default host.
 - **`--until=<kind>`** ends the watch after the first event of that kind, for example `--until=finished` to wait for one pipeline. **`--timeout=<duration>`** ends it that long after the start.
 - **`--idle-after=<duration>`** ends it when nothing was reported for that long (`watch_ended` reason `idle`).
@@ -63,6 +66,7 @@ Before anything else, read the header in the background task's output. Each line
 - An author waiting for CI and review: everything, the default.
 - CI only: `--events=pipeline,push`. Leaving out `comments` also saves the thread fetches.
 - A review queue: `glab-watch mrs group/project --events=status`.
+- My review queue across projects: `glab-watch my-mrs <host> --list=reviews_requested`; MRs returned to me: `--list=returned_to_you`.
 
 ## The messages
 
@@ -121,3 +125,4 @@ Each resource has one dir under the session scratchpad, mirroring its GitLab URL
 - No ticket states: glab-watch reads GitLab only.
 - A session in bypass-permissions mode holds the messages until the user lets them in. The changelog still has every event.
 - `mr_updated` of an `mrs` watch is best effort: GitLab does not move `updated_at` for a second change within a minute.
+- A `my-mrs` watch lags by its `--interval`, 15 minutes by default, on purpose: it rereads all your open MRs each time. A reviewer starting a draft review is seen only at the next poll. When one MR needs a reaction within seconds, watch it with `glab-watch mr`.

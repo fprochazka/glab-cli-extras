@@ -64,6 +64,14 @@ MR_OWN_KINDS: tuple[str, ...] = (
     "thread_unresolved",
 )
 MRS_KINDS: tuple[str, ...] = ("mr_opened", "mr_updated", "mr_merged", "mr_closed", "mr_reopened")
+MY_MRS_KINDS: tuple[str, ...] = (
+    "mr_opened",
+    "mr_updated",
+    "mr_merged",
+    "mr_closed",
+    "list_changed",
+    "review_state_changed",
+)
 BRANCH_KINDS: tuple[str, ...] = (
     "pushed",
     "force_pushed",
@@ -88,6 +96,7 @@ KINDS_BY_RESOURCE: Mapping[str, tuple[str, ...]] = {
     "mr": (*MR_OWN_KINDS, *MR_PIPELINE_KINDS, QUIET, PIPELINE_STUCK),
     "mrs": MRS_KINDS,
     "branch": BRANCH_KINDS,
+    "my-mrs": MY_MRS_KINDS,
 }
 
 GROUPS: Mapping[str, tuple[str, ...]] = {
@@ -105,6 +114,8 @@ GROUPS: Mapping[str, tuple[str, ...]] = {
         "target_branch_changed",
         QUIET,
         *MRS_KINDS,
+        "list_changed",
+        "review_state_changed",
     ),
     "comments": ("thread_created", "thread_updated", "thread_resolved", "thread_unresolved"),
     "push": ("pushed", "force_pushed", "created", "deleted"),

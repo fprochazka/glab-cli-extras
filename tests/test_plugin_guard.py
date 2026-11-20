@@ -79,6 +79,7 @@ def install(
     if watch is not None:
         fake(bin_dir, "glab-watch", f"echo 'glab-watch {watch}'")
         fake(bin_dir, "glab-mr-status", "exit 0")
+        fake(bin_dir, "glab-my-mrs", "exit 0")
         fake(bin_dir, "glab-cli-extras-cc-hook", "exit 0")
     fake(bin_dir, "glab-pipeline", f"echo '{pipeline} {__version__}'")
     fake(bin_dir, "glab-discussion", f"echo '{discussion} {__version__}'")

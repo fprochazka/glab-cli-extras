@@ -51,6 +51,7 @@ from glab_cli_extras.resources import base as glab_base
 from glab_cli_extras.resources import branch as branch_res
 from glab_cli_extras.resources import mr as mr_res
 from glab_cli_extras.resources import mr_list as mr_list_res
+from glab_cli_extras.resources import my_mrs as my_mrs_res
 from glab_cli_extras.resources import pipeline as pipeline_res
 from glab_cli_extras.resources.mr import prefetch_threads, thread_cache_key
 from glab_cli_extras.resources.pipeline import PipelinePoller, log_cache_key, prefetch_log
@@ -75,6 +76,7 @@ BASE_INTERVALS: Mapping[str, float] = {
     "pipeline": pipeline_res.INTERVAL_RUNNING,
     "mrs": mr_list_res.INTERVAL,
     "branch": branch_res.PUSH_INTERVAL,
+    "my-mrs": my_mrs_res.INTERVAL,
 }
 """The interval of a kind before its first poll; after it, the poller's own `next_delay` decides."""
 
@@ -144,6 +146,12 @@ def kit_error(exc: Exception) -> SourceError:
     return Transient(str(exc) or type(exc).__name__)
 
 
+def shortest_interval(options: Sequence[Mapping[str, Any]]) -> float | None:
+    """The shortest `--interval` of the subscribers of a `my-mrs` watch, None when nobody sent one."""
+    intervals = [float(o["interval"]) for o in options if isinstance(o.get("interval"), int | float)]
+    return min(intervals) if intervals else None
+
+
 def logs_mode(options: Sequence[Mapping[str, Any]]) -> LogsMode:
     """The merged `--logs` mode of every subscriber; `none` when nobody sent one (an MR watch)."""
     modes = [cast(LogsMode, o["logs"]) for o in options if o.get("logs") in LOGS_MODES]
@@ -201,6 +209,12 @@ class GlabSource(Source[Any]):
         return client
 
     def check_options(self, target: Target, options: Mapping[str, Any]) -> Mapping[str, Any]:
+        if target.kind == "my-mrs":
+            interval = options.get("interval", my_mrs_res.INTERVAL)
+            valid = isinstance(interval, int | float) and not isinstance(interval, bool)
+            if set(options) - {"interval"} or not valid or interval < my_mrs_res.MIN_INTERVAL:
+                raise ValueError(f"options.interval must be a number of seconds, at least {my_mrs_res.MIN_INTERVAL:g}")
+            return {"interval": float(interval)}
         logs = options.get("logs", "failed")
         if logs not in LOGS_MODES or set(options) - {"logs"}:
             raise ValueError(f"options.logs must be one of {', '.join(LOGS_MODES)}")
@@ -234,7 +248,9 @@ class GlabSource(Source[Any]):
         if poller.snapshot is None and item.snapshot is not None:
             # A baseline a resubscribing watcher kept: the first poll reports what changed since.
             poller.snapshot = item.snapshot
-        poller.set_options(glab_base.PollerOptions(item.events, logs_mode(item.options)))
+        poller.set_options(
+            glab_base.PollerOptions(item.events, logs_mode(item.options), shortest_interval(item.options))
+        )
         return poller
 
     async def poll(self, batch: Sequence[PollItem[Any]], ctx: PollContext) -> Mapping[str, PollOutcome[Any]]:
@@ -259,7 +275,8 @@ class GlabSource(Source[Any]):
         """The events between a resubscribing watcher's baseline and the current snapshot.
 
         MR and pipeline report everything their poll would. A branch reports its pipelines, and an MR list nothing:
-        their pushes and changes come from GitLab's event feed and MR list, which two snapshots do not hold.
+        their pushes and changes come from GitLab's event feed and MR list, which two snapshots do not hold. The
+        dashboard reports everything but the MRs that left it, which the next poll reports.
         """
         raws: list[RawEvent] = []
         if isinstance(previous, MrSnapshot) and isinstance(current, MrSnapshot):
@@ -273,6 +290,9 @@ class GlabSource(Source[Any]):
                 raws.append(raw)
         elif isinstance(previous, PipelineSnapshot) and isinstance(current, PipelineSnapshot):
             raws = pipeline_res.diff_pipeline(previous, current)
+        elif isinstance(previous, my_mrs_res.MyMrsSnapshot) and isinstance(current, my_mrs_res.MyMrsSnapshot):
+            # What became of an MR that left the open set needs a request; the next poll reports it.
+            _, raws = my_mrs_res.diff_my_mrs(previous, current, None)
         elif isinstance(previous, branch_res.BranchSnapshot) and isinstance(current, branch_res.BranchSnapshot):
             ref = ref_of(target)
             raws = branch_res.diff_pipelines(previous.pipelines, current.pipelines, f"https://{ref.host}/{ref.project}")

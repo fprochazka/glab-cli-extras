@@ -2,10 +2,11 @@
 
 Extra commands for the [GitLab CLI](https://gitlab.com/gitlab-org/cli) (`glab`), built for coding agents that wait on CI and review, and just as usable in a terminal or a script:
 
-- `glab-watch` watches a merge request, a pipeline, all merge requests of a project, or a branch, and reports every change as one JSON event per line.
+- `glab-watch` watches a merge request, a pipeline, all merge requests of a project, a branch, or your merge request dashboard, and reports every change as one JSON event per line.
 - `glab-pipeline inspect` dumps a pipeline's state and job logs and prints a problem-driven summary.
 - `glab-discussion` reads a merge request's discussion threads into one file per thread, and writes comments, replies, resolves and reviews.
 - `glab-mr-status` reads merge requests once and reports what changed since the last read, with a one-line scorecard each.
+- `glab-my-mrs` prints your merge request dashboard as it is now, all of its lists or only some.
 - `glab-search-code` runs a GitLab code search and downloads every file that matched, so you can read and grep them locally.
 - `glab-cli-extras-cc-hook` is a Claude Code hook that stops an agent from inspecting pipelines or reading and writing MR discussions with raw `glab`, and names the command to use instead.
 
@@ -57,9 +58,9 @@ All the commands write into the same tree, one dir per resource, so a file one c
 - else `<temp dir>/glab-cli-extras-<uid>/`, private to the user, which the OS cleans;
 - or `--base-dir` for `glab-watch`, and `--output-dir` for `glab-pipeline inspect` and `glab-search-code`, which names the resource's dir itself.
 
-The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipelines/<id>/`, `.../-/merge_requests/<iid>/`, `.../-/merge_requests/` for `glab-watch mrs` and `.../-/branches/<branch>/` for `glab-watch branch`. Each one has a `README.txt` that names its files:
+The resource dirs mirror GitLab's URLs: `<base>/<host>/<group>/<project>/-/pipelines/<id>/`, `.../-/merge_requests/<iid>/`, `.../-/merge_requests/` for `glab-watch mrs`, `.../-/branches/<branch>/` for `glab-watch branch`, and `<base>/<host>/dashboard/merge_requests/` for `glab-watch my-mrs` (`.../layout-action/` or `.../layout-role/` with `--layout`). Each one has a `README.txt` that names its files:
 
-- `state.json`: the latest state of the pipeline or MR, written on every change.
+- `state.json`: the latest state of the pipeline or MR, written on every change. For `my-mrs`, the dashboard's lists in the shape `glab-my-mrs --json` prints.
 - `events.jsonl`: the changelog, every event a watcher reported, and `baseline.json`, the last state this watcher saw.
 - `job-logs/<stage>-<name>-<job id>.log` in a pipeline's dir: one file for every job, either the log or a placeholder. See [Job logs](#job-logs).
 - `threads/<created>-<author>-<id>.txt` in an MR's dir: one file per discussion thread. A header gives the full discussion id, the type, the file and line of a diff note, `Resolved:` on resolvable threads, and the URL. Then comes one `[<created>] @<username> (note:<id>):` block per note. Bot authors get a `bot-` file name prefix and a `[BOT]` tag, service accounts their display name. A file is rewritten only when the thread changed: a new reply, an edit, a resolve. `.meta.json` maps each discussion id to its file.
@@ -91,11 +92,14 @@ glab-watch mr group/project!123                      # a merge request; also !12
 glab-watch pipeline group/project!4567               # a pipeline and its downstream pipelines; also !4567, 4567, or the pipeline URL
 glab-watch mrs group/project                         # every merge request of a project
 glab-watch branch group/project main                 # a branch; the repo is optional: glab-watch branch main
+glab-watch my-mrs                                    # your merge request dashboard: the host of the cwd's repo, else glab's default host
+glab-watch my-mrs gitlab.example.com --interval=2m   # a host or any URL on it, read every 2 minutes (default 15m, at least 1m)
+glab-watch my-mrs --list=returned_to_you,reviews_requested  # only MRs in these lists; or --side=author|reviewer
 ```
 
 `<repo>` means the same as it does to glab: `group/project`, `group/sub/project`, `host/group/project`, a project URL, or nothing for the repository of the current directory. `glab-watch` asks `glab repo view` to resolve it, which costs one request at start. A URL costs nothing.
 
-A watcher runs until its resource ends (an MR is merged or closed, a pipeline finishes), until `--until`, `--timeout` or `--idle-after` fires, or until it gets SIGTERM or Ctrl-C. `mrs` and `branch` run until stopped. The last event is always `watch_ended` with a `reason`.
+A watcher runs until its resource ends (an MR is merged or closed, a pipeline finishes), until `--until`, `--timeout` or `--idle-after` fires, or until it gets SIGTERM or Ctrl-C. `mrs`, `branch` and `my-mrs` run until stopped. The last event is always `watch_ended` with a `reason`.
 
 The exit code is 0 when the watch ends normally, 1 when the resource is not found or the daemon fails, and 2 for a usage error.
 
@@ -103,7 +107,7 @@ One watcher at a time writes a resource dir. A second watcher of the same resour
 
 ### Options
 
-All four resource commands take:
+All five resource commands take:
 
 - `--events=<kinds or groups>`: report only these. Comma-separated, repeatable. The default is every event the resource tracks.
 - `--exclude-events=<kinds or groups>`: do not report these.
@@ -116,6 +120,12 @@ All four resource commands take:
 - `--no-daemon`: poll inside this process, with a private budget, without the shared daemon.
 
 `pipeline` also takes `--logs=failed|all|none`: which finished jobs get their log downloaded. The default is `failed`. `mr` does not take `--logs`; follow the `watch_command` of a pipeline event for the jobs.
+
+`my-mrs` also takes:
+
+- `--interval=<duration>`: how often to read the dashboard, `15m` by default, at least `1m`. Watchers of the same host share one poller, which reads at the shortest interval any of them asked for. For one MR that needs a faster reaction, watch it with `mr`.
+- `--layout=auto|action|role`: `auto`, the default, follows your dashboard preference, read again on every poll. `action` or `role` pins the action-based or role-based lists; a pinned layout gets a poller and a dir of its own.
+- `--list=<list ids>`, comma-separated and repeatable, and `--side=author|reviewer`: report only MRs in these lists, before or after a change, so an MR that leaves a selected list is reported once more. The ids are those of [glab-my-mrs](#glab-my-mrs). The filter runs in the watcher, so it costs nothing and all watchers of a host still share one poller. `watch_started` and `state.json` show only the selected lists. A `--list` id of the other layout is not an error at start, because `auto` learns the layout from the first poll; the watcher then prints a warning and reports nothing until the layout changes.
 
 Two thresholds report what did not happen. The watcher computes them from what it already receives, so they cost no request:
 
@@ -140,7 +150,7 @@ glab-watch: daemon: pid 4242, endpoint /run/user/1000/glab-cli-extras/daemon-l1-
 glab-watch: restart with: glab-watch mr https://gitlab.example.com/group/project/-/merge_requests/123 --events=<kinds|groups> --exclude-events=<kinds|groups> (groups: status, comments, push, pipeline)
 ```
 
-The `state:` line appears for `mr` and `pipeline` only. A watch with `--quiet-after` or `--stuck-after` adds a `thresholds:` line, a `pipeline` watch adds a `logs:` line after `state:` and `--logs=failed|all|none` to its `restart with:` line, a watch with `--until`, `--timeout` or `--idle-after` adds an `ends:` line, and a `stream fallback:` line says why `auto` did not message the session.
+The `state:` line appears for `mr`, `pipeline` and `my-mrs`. A `my-mrs` watch adds `layout:`, `interval:` and `lists:` lines, and its `restart with:` line repeats `--layout`, `--interval`, `--list` and `--side`. A watch with `--quiet-after` or `--stuck-after` adds a `thresholds:` line, a `pipeline` watch adds a `logs:` line after `state:` and `--logs=failed|all|none` to its `restart with:` line, a watch with `--until`, `--timeout` or `--idle-after` adds an `ends:` line, and a `stream fallback:` line says why `auto` did not message the session.
 
 The header and the other status lines (`ended: …`, errors) always go to stderr, so stdout carries only events. Claude Code puts a background task's stderr into the task output next to its stdout, so an agent sees both. A status line never starts with `{`: in merged output, every line that starts with `{` is an event.
 
@@ -179,11 +189,21 @@ One `glab-discussion drafts publish` changes the MR in up to three ways at once:
 
 `mrs`: `mr_opened`, `mr_updated`, `mr_merged`, `mr_closed`, `mr_reopened`. When the list shows what moved, the event has `changes: {field: [old, new]}` for `title`, `draft`, `target_branch`, `sha`, `detailed_merge_status`, `labels`, `assignees` and `reviewers`, for example `{"draft": [true, false]}` when a draft becomes ready. These come from the same list request, so they cost nothing extra.
 
+`my-mrs`: every event about an MR carries `reference` (`group/project!123`), `project`, the `mrs` events' data (`iid`, `title`, `state`, `author`, `source_branch`, `target_branch`, `draft`, `web_url`, `updated_at`), and `lists`, the dashboard lists the MR is in now, `{"author": <list id> | null, "reviewer": <list id> | null}`: the list where you are the author or an assignee, and the one where you are a reviewer.
+
+- `list_changed` (`side`, `from`, `to`): one per side. An MR that enters the dashboard has `from: null`; one that leaves it while still open has `to: null` and a `reason`: `unassigned`, `review_request_removed`, `hidden` (still yours, but in no list, such as a draft with "show drafts" off) or `gone` (deleted, or you no longer see it).
+- `review_state_changed` (`reviewer`, `from`, `to`, `at`): one per reviewer whose review state moved, lowercased, for example `unreviewed` to `requested_changes`. The `list_changed` it causes comes in the same batch.
+- `mr_updated` with `changes` as for `mrs`, plus `pipeline_status`, the head pipeline's status.
+- `mr_opened` for an MR created after the watch started; an older MR that becomes yours is a `list_changed` from `null`.
+- `mr_merged` (`merged_at`, `merged_list`: `merged_recently_assigned` or `merged_recently_reviews`) and `mr_closed`, once each. The Merged tab's counts appear only in `watch_started`, which also has the counts per list, the layout and the drafts setting.
+
+A change of the dashboard preference moves every MR to the other layout's lists, each with a `list_changed`.
+
 `branch`: `pushed`, `force_pushed`, `created`, `deleted`, `pipeline_created`, `pipeline_finished`. A push whose head commit is a merge commit has `merge_commit: true` and, when GitLab knows it, `merged_mr_iid`.
 
 `--events` and `--exclude-events` take kinds and these groups:
 
-- `status`: `state_changed`, `draft_changed`, `merge_status_changed`, `approvals_changed`, `reviewers_changed`, `assignees_changed`, `labels_changed`, `blocking_threads_resolved_changed`, `title_changed`, `description_changed`, `target_branch_changed`, `quiet`, and all `mr_*`.
+- `status`: `state_changed`, `draft_changed`, `merge_status_changed`, `approvals_changed`, `reviewers_changed`, `assignees_changed`, `labels_changed`, `blocking_threads_resolved_changed`, `title_changed`, `description_changed`, `target_branch_changed`, `quiet`, all `mr_*`, `list_changed` and `review_state_changed`.
 - `comments`: `thread_*`.
 - `push`: `pushed`, `force_pushed`, `created`, `deleted`.
 - `pipeline`: `head_pipeline_changed`, `external_status_changed`, `pipeline_status_changed`, `status_changed`, `job_*`, `downstream_created`, `finished`, `pipeline_created`, `pipeline_finished`, `pipeline_stuck`.
@@ -239,7 +259,7 @@ glab-watch daemon stop        # running watchers start a new daemon on their nex
 - **Leases.** Each watcher polls the daemon every 5 s, which renews its subscriptions. A watcher that dies stops costing anything 20 s later.
 - **Restarts.** If the daemon goes away, watchers start a new one and subscribe again. The new daemon compares GitLab's state with the snapshot each watcher kept, so a change made in between is still reported, to every watcher, and nothing is reported twice. A watcher that comes back after another one gets that gap from a diff against the snapshot the first one polled, which follows the first one's filters: it can miss thread, external status or pipeline changes, and its `job_finished` events have no `log_truncated` or `after_push`. A subscribe that fails for a reason that may pass, such as GitLab being unreachable after a suspend, is tried again with a backoff.
 - **Budget.** The daemon paces each host on GitLab's `RateLimit-Remaining` and `RateLimit-Reset` headers and uses at most half of what is left. A host without those headers gets 60 requests a minute. When the budget is short, every poll interval grows by the same factor, but never past the time until GitLab resets the limit. A 429 pauses the whole host for its `Retry-After`. A poll that fails is reported once as `watch_degraded` and tried again with a backoff; it never stops the other resources.
-- **Cheap probes.** Pipelines are polled through GitLab's GraphQL ETag cache: an unchanged pipeline answers with a 304 before any query runs. Base intervals: pipeline 5 s while running, MR 30 s (15 s on hosts with a high rate limit), branch pipelines 10 s, branch pushes 30 s, `mrs` 60 s.
+- **Cheap probes.** Pipelines are polled through GitLab's GraphQL ETag cache: an unchanged pipeline answers with a 304 before any query runs. Base intervals: pipeline 5 s while running, MR 30 s (15 s on hosts with a high rate limit), branch pipelines 10 s, branch pushes 30 s, `mrs` 60 s, `my-mrs` 15 min unless `--interval` says otherwise. A `my-mrs` poll reads your whole open set again, because a review state changes without touching the MR's `updated_at`: one request per 50 MRs per side, and one more for the MRs that left the set, to tell a merge or a close from a removed review request.
 - **Sharing.** Watchers of the same resource share one poller. All watched branches of a project share one push-event request.
 - **No files.** The daemon writes no files. It fetches each log and each changed thread once, keeps it in memory for a while, and hands it to every watcher that asks, so ten watchers of one pipeline cost one download. The watchers write the files. The daemon keeps the [capabilities](#the-capability-cache) of each host in memory for a day instead of in the cache dir.
 
@@ -374,6 +394,40 @@ The read is printed and flushed before it is stored, so a read killed in between
 - the `threads/` dir and, in the pipeline's dir, the pipeline dump, as `glab-discussion read` and `glab-pipeline inspect` write them.
 
 The exit code is 0 for a baseline or a read, 5 when no MR could be read, 1 for an error such as no MR on the current branch, and 2 for a usage error. When some MRs of a set fail and others are read, the exit code is 0 and each failed MR has a `READ_FAILED` line.
+
+## glab-my-mrs
+
+```bash
+glab-my-mrs                                          # every open list of your dashboard; the host of the cwd's repo, else glab's default host
+glab-my-mrs gitlab.example.com                       # a host, or any URL on it, such as https://gitlab.example.com/dashboard/merge_requests
+glab-my-mrs --list returned_to_you,reviews_requested # only these lists; comma-separated or repeated
+glab-my-mrs --side reviewer                          # only the lists where you are a reviewer; author for those where you are the author or an assignee
+glab-my-mrs --list merged_recently_reviews           # a list of the Merged tab; costs one more request
+glab-my-mrs --layout role                            # the role-based lists; default: your dashboard preference
+glab-my-mrs --json | jq                              # the same as JSON
+```
+
+`glab-my-mrs` answers "what is on my merge request dashboard right now" (`https://<host>/dashboard/merge_requests`), with the dashboard's own lists and rules. To be told when the lists change, run `glab-watch my-mrs` instead of reading in a loop.
+
+The lists, with their side, in the dashboard's order:
+
+- action-based: `returned_to_you` (author: a reviewer left feedback or requested changes), `reviews_requested` (reviewer: your review is pending), `assigned_to_you` (author: no reviewers), `waiting_for_assignee` (reviewer: you reviewed or requested changes), `waiting_for_approvals` (author), `approved_by_you` (reviewer), `approved_by_others` (author: every reviewer approved);
+- role-based: `reviews` (reviewer, pending), `assigned` (author, all of yours), `reviews_inactive` (reviewer, done);
+- the Merged tab, in both: `merged_recently_reviews` and `merged_recently_assigned`, the last two weeks. They are shown only when `--list` names one.
+
+The author side is the MRs you authored or are assigned to, and the reviewer side the MRs that request your review; an MR can be in one list of each. The author-side lists ignore GitLab's Duo bot (`GitLabDuo`) as a reviewer, as the dashboard does. When the host has no such user, a warning on stderr says that no reviewer is ignored. With "show drafts" off, your drafts are left out of `assigned_to_you` and `assigned`.
+
+```text
+gitlab.example.com · alice · action_based · drafts shown
+== returned_to_you (author) · 1 · Returned to you
+  group/project!123 · by alice · pipeline success · reviewers bob reviewed · updated 2026-11-20T09:12:00Z · Add caching
+    https://gitlab.example.com/group/project/-/merge_requests/123
+== reviews_requested (reviewer) · 0 · Review requested
+```
+
+`--json` prints `{"host", "username", "layout", "show_drafts", "lists": [{"id", "side", "title", "count", "merge_requests": [...]}]}`. Each MR has `reference`, `iid`, `project`, `title`, `web_url`, `author`, `draft`, `lists`, `reviewers` (`username` and review `state`), `pipeline_status`, `detailed_merge_status`, `updated_at`, and `merged_at` in a Merged list. `glab-watch my-mrs` writes the same shape into its `state.json`.
+
+`--list` with a list of the other layout is a usage error that names the layout's lists; with `--layout action` or `role` it is checked before any request. A read costs one GraphQL request per 50 open MRs per side, and one more for the Merged tab. Nothing is written to disk. The exit code is 0 for a read, 1 for an error, and 2 for a usage error.
 
 ## glab-search-code
 

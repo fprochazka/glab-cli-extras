@@ -39,7 +39,9 @@ def relative_threads_dir(event: Event, directory: Path) -> Event:
 
 
 def sender_name(ref: ResourceRef) -> str:
-    """The name Claude Code shows for the sender: `glab-watch mr group/project!123`."""
+    """The name Claude Code shows for the sender: `glab-watch mr group/project!123`, `glab-watch my-mrs <host>`."""
+    if ref.kind == "my-mrs":
+        return f"glab-watch my-mrs {ref.short}"
     short = ref.short.split("/", 1)[1] if "/" in ref.short else ref.short
     return f"glab-watch {ref.kind} {short}"
 

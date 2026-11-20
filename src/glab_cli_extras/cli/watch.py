@@ -7,7 +7,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated, Any, NoReturn
 
 import typer
 from cli_watch_kit.claude import MESSAGE_PRIORITIES, STREAM_MODES
@@ -21,6 +21,7 @@ from cli_watch_kit.sinks import StatusOutput
 
 from glab_cli_extras import __version__
 from glab_cli_extras.cli.stdio import force_utf8_stdio
+from glab_cli_extras.dashboard.lists import LAYOUT_OPTIONS, ListFilter, ListFilterError, parse_list_filter
 from glab_cli_extras.events import (
     CATALOG,
     KINDS_BY_RESOURCE,
@@ -30,8 +31,10 @@ from glab_cli_extras.events import (
     FilterError,
 )
 from glab_cli_extras.gitlab.glab import GlabNotFoundError
-from glab_cli_extras.gitlab.refs import RefError, ResourceRef, parse_id_ref, parse_repo_ref
+from glab_cli_extras.gitlab.refs import RefError, ResourceRef, parse_dashboard_ref, parse_id_ref, parse_repo_ref
 from glab_cli_extras.paths import base_dir as default_base_dir
+from glab_cli_extras.resources.my_mrs import INTERVAL as MY_MRS_INTERVAL
+from glab_cli_extras.resources.my_mrs import MIN_INTERVAL as MY_MRS_MIN_INTERVAL
 from glab_cli_extras.store.layout import readme_text, resource_dir
 from glab_cli_extras.sync.job_logs import LOGS_MODES, LogsMode
 from glab_cli_extras.watch.app import APP, sender_name
@@ -137,6 +140,31 @@ StuckAfterOpt = Annotated[
         "it so, for example 30m.",
     ),
 ]
+IntervalOpt = Annotated[
+    str,
+    typer.Option(
+        "--interval", help="How often to read the dashboard, for example 15m (the default) or 2m; at least 1m."
+    ),
+]
+LayoutOpt = Annotated[
+    str,
+    typer.Option(
+        "--layout",
+        help="auto follows your dashboard preference; action or role pins the action-based or role-based lists.",
+    ),
+]
+ListOpt = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--list",
+        help="Report only MRs in these dashboard lists, before or after a change; comma-separated, for example "
+        "returned_to_you,reviews_requested.",
+    ),
+]
+SideOpt = Annotated[
+    str | None,
+    typer.Option("--side", help="Report only the lists where you are the author or assignee (author) or a reviewer."),
+]
 LogsOpt = Annotated[str, typer.Option("--logs", help="Which finished jobs get their log fetched: failed, all or none.")]
 
 
@@ -158,6 +186,8 @@ def restart_ref(ref: ResourceRef) -> str:
         return f"{base}/-/pipelines/{ref.id}"
     if ref.kind == "branch":
         return f"{base} {ref.branch}"
+    if ref.kind == "my-mrs":
+        return f"https://{ref.host}/dashboard/merge_requests" + (f" --layout={ref.layout}" if ref.layout else "")
     return base
 
 
@@ -180,7 +210,7 @@ def _duration(option: str, value: str) -> float:
 def _header(ref: ResourceRef, base: Path | None, logs: str | None) -> list[str]:
     """glab-watch's own header lines: the dir's `state.json` and the `--logs` mode."""
     lines = []
-    if ref.kind in ("mr", "pipeline"):
+    if ref.kind in ("mr", "pipeline", "my-mrs"):
         lines.append(f"state: {resource_dir(default_base_dir(base), ref) / 'state.json'}")
     if logs is not None:
         lines.append(f"logs: {logs}")
@@ -203,6 +233,10 @@ def run_watch(
     quiet_after: list[str] | None = None,
     stuck_after: str | None = None,
     idle_after: str | None = None,
+    source_options: dict[str, Any] | None = None,
+    lists: ListFilter | None = None,
+    header: list[str] | None = None,
+    restart_options: list[str] | None = None,
 ) -> None:
     """Check every option before anything starts (no glab call, no daemon), then run the watch on cli-watch-kit."""
     if events_stream not in STREAM_MODES:
@@ -247,17 +281,18 @@ def run_watch(
     timers = [WatchTimers(kind, thresholds, time.monotonic())] if enabled else []
     also = also_subscribe(kind, enabled)
     restart = f"glab-watch {kind} {restart_ref(ref)}" + (" --logs=failed|all|none" if logs is not None else "")
+    restart += "".join(f" {option}" for option in restart_options or ())
 
     def writer(context: WriterContext) -> ResourceWriter:
         return ResourceWriter(
-            context.base_dir, ref_of(context.target), DaemonFetches(context.backend), logs_mode, context.status
+            context.base_dir, ref_of(context.target), DaemonFetches(context.backend), logs_mode, context.status, lists
         )
 
     code = kit_run_watch(
         APP,
         target_of(ref),
         options,
-        source_options={"logs": logs_mode} if kind == "pipeline" else None,
+        source_options={"logs": logs_mode} if kind == "pipeline" else source_options,
         enabled_thresholds=enabled,
         also_subscribe=also,
         timers=timers,
@@ -266,7 +301,7 @@ def run_watch(
         readme=readme_text(kind),
         sender_name=sender_name(ref),
         restart=restart,
-        header=_header(ref, base_dir, logs),
+        header=_header(ref, base_dir, logs) + (header or []),
         status=_status(),
     )
     raise typer.Exit(code)
@@ -400,6 +435,63 @@ def branch(
         no_daemon=no_daemon,
         message_priority=message_priority,
         logs=None,
+    )
+
+
+@app.command("my-mrs")
+def my_mrs(
+    host: Annotated[
+        str | None,
+        typer.Argument(
+            help="gitlab.example.com or any URL on the host, such as the dashboard's; default: the host of the cwd's "
+            "repo, else glab's default host."
+        ),
+    ] = None,
+    interval: IntervalOpt = "15m",
+    layout: LayoutOpt = "auto",
+    list_: ListOpt = None,
+    side: SideOpt = None,
+    events: EventsOpt = None,
+    exclude_events: ExcludeOpt = None,
+    until: UntilOpt = None,
+    timeout: TimeoutOpt = None,
+    idle_after: IdleAfterOpt = None,
+    events_stream: StreamOpt = "auto",
+    base_dir: BaseDirOpt = None,
+    message_priority: PriorityOpt = "next",
+    no_daemon: NoDaemonOpt = False,
+) -> None:
+    """Watch your merge request dashboard: MRs entering or leaving its lists, review states, merges and updates of
+    your MRs and your review requests across projects. Runs until stopped. For the lists now, run glab-my-mrs."""
+    seconds = _duration("--interval", interval)
+    if seconds < MY_MRS_MIN_INTERVAL:
+        _fail("--interval: at least 1m; for one MR that needs a faster reaction, watch it with glab-watch mr")
+    if layout not in LAYOUT_OPTIONS:
+        _fail(f"--layout must be one of {', '.join(LAYOUT_OPTIONS)}")
+    try:
+        lists = parse_list_filter(list_, side)
+    except ListFilterError as exc:
+        _fail(str(exc))
+    pinned = None if layout == "auto" else layout
+    header = [f"layout: {layout}", f"interval: {interval}", f"lists: {lists.describe()}"]
+    options = ([] if seconds == MY_MRS_INTERVAL else [f"--interval={interval}"]) + lists.options()
+    run_watch(
+        lambda: parse_dashboard_ref(host, pinned),
+        "my-mrs",
+        events=events,
+        exclude_events=exclude_events,
+        events_stream=events_stream,
+        base_dir=base_dir,
+        until=until,
+        timeout=timeout,
+        idle_after=idle_after,
+        no_daemon=no_daemon,
+        message_priority=message_priority,
+        logs=None,
+        source_options={"interval": seconds},
+        lists=lists,
+        header=header,
+        restart_options=options,
     )
 
 

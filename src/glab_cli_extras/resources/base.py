@@ -49,6 +49,8 @@ class PollerOptions:
 
     events: frozenset[str]
     logs: LogsMode = "failed"
+    interval: float | None = None
+    """`my-mrs` only: the shortest `--interval` of the subscribers, in seconds."""
 
     def wants(self, *kinds: str) -> bool:
         return any(kind in self.events for kind in kinds)

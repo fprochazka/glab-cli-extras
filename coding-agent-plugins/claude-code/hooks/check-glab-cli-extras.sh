@@ -16,7 +16,7 @@ minor_of() {
 }
 
 if ! command -v glab-watch >/dev/null 2>&1; then
-  add "glab-cli-extras is not installed, so the commands the glab plugin's skills use (glab-watch, glab-mr-status, glab-pipeline, glab-discussion, glab-search-code) are missing, and the plugin's Bash guard is inactive until glab-cli-extras is installed: it allows every Bash call. Tell the user and offer to run: uv tool install glab-cli-extras"
+  add "glab-cli-extras is not installed, so the commands the glab plugin's skills use (glab-watch, glab-mr-status, glab-my-mrs, glab-pipeline, glab-discussion, glab-search-code) are missing, and the plugin's Bash guard is inactive until glab-cli-extras is installed: it allows every Bash call. Tell the user and offer to run: uv tool install glab-cli-extras"
 else
   wanted=$(sed -n 's/.*"version"[^"]*"\([^"]*\)".*/\1/p' "$plugin_root/.claude-plugin/plugin.json" 2>/dev/null | head -n 1)
   installed=$(glab-watch --version 2>/dev/null | head -n 1)
@@ -29,7 +29,7 @@ else
   # A version number can agree while the install predates a command, for example an editable install whose entry
   # points were created by an older release.
   missing=""
-  for command in glab-mr-status glab-search-code glab-cli-extras-cc-hook; do
+  for command in glab-mr-status glab-my-mrs glab-search-code glab-cli-extras-cc-hook; do
     command -v "$command" >/dev/null 2>&1 || missing="${missing:+$missing, }$command"
   done
   if [ -n "$missing" ]; then

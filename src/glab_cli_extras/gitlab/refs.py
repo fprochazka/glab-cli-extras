@@ -16,8 +16,10 @@ from urllib.parse import urlsplit
 
 from glab_cli_extras.gitlab.glab import ProcessResult, run_glab_sync, stderr_message
 
-ResourceKind = Literal["mr", "pipeline", "mrs", "branch"]
-RESOURCE_KINDS: tuple[ResourceKind, ...] = ("mr", "pipeline", "mrs", "branch")
+ResourceKind = Literal["mr", "pipeline", "mrs", "branch", "my-mrs"]
+RESOURCE_KINDS: tuple[ResourceKind, ...] = ("mr", "pipeline", "mrs", "branch", "my-mrs")
+DASHBOARD_LAYOUTS = ("action", "role")
+"""The `--layout` values that pin the dashboard's layout; without one it follows the user's preference."""
 
 _URL_RE = re.compile(r"^https?://(?P<host>[^/]+)/(?P<project>.+?)/-/(?P<what>merge_requests|pipelines)/(?P<id>\d+)")
 _ID_RE = re.compile(r"^(?:(?P<repo>.*)!)?(?P<id>\d+)$")
@@ -32,15 +34,23 @@ class ResourceRef:
     kind: ResourceKind
     host: str
     project: str
+    """Empty for `my-mrs`, which belongs to the user, not to a project."""
     id: int | None = None
     """MR iid for `mr`, pipeline id for `pipeline`."""
     branch: str | None = None
+    layout: str | None = None
+    """`my-mrs` only: the dashboard layout the watch pins (`action` or `role`), None to follow the preference. Part
+    of the identity, so two watchers that pin different layouts get a poller each."""
 
     def __post_init__(self) -> None:
         if self.kind in ("mr", "pipeline") and self.id is None:
             raise RefError(f"a {self.kind} reference needs an id")
         if self.kind == "branch" and not self.branch:
             raise RefError("a branch reference needs a branch name")
+        if self.kind != "my-mrs" and not self.project:
+            raise RefError(f"a {self.kind} reference needs a project")
+        if self.layout is not None and (self.kind != "my-mrs" or self.layout not in DASHBOARD_LAYOUTS):
+            raise RefError(f"a layout is one of {', '.join(DASHBOARD_LAYOUTS)}, and only for my-mrs")
 
     @property
     def key(self) -> str:
@@ -49,7 +59,9 @@ class ResourceRef:
 
     @property
     def short(self) -> str:
-        """The reference without the kind: `gitlab.com/group/project!123`."""
+        """The reference without the kind: `gitlab.com/group/project!123`; `gitlab.com` for `my-mrs`."""
+        if self.kind == "my-mrs":
+            return self.host if self.layout is None else f"{self.host} layout={self.layout}"
         base = f"{self.host}/{self.project}"
         if self.kind in ("mr", "pipeline"):
             return f"{base}!{self.id}"
@@ -63,6 +75,8 @@ class ResourceRef:
             wire["id"] = self.id
         if self.branch is not None:
             wire["branch"] = self.branch
+        if self.layout is not None:
+            wire["layout"] = self.layout
         return wire
 
     @classmethod
@@ -73,14 +87,16 @@ class ResourceRef:
         if kind not in RESOURCE_KINDS:
             raise RefError(f"unknown resource kind: {kind!r}")
         host, project = data.get("host"), data.get("project")
-        if not isinstance(host, str) or not host or not isinstance(project, str) or not project:
+        if not isinstance(host, str) or not host or not isinstance(project, str):
             raise RefError("resource needs host and project")
-        raw_id, branch = data.get("id"), data.get("branch")
+        raw_id, branch, layout = data.get("id"), data.get("branch"), data.get("layout")
         if raw_id is not None and not isinstance(raw_id, int):
             raise RefError("resource id must be an integer")
         if branch is not None and not isinstance(branch, str):
             raise RefError("resource branch must be a string")
-        return cls(cast(ResourceKind, kind), host, project, raw_id, branch)
+        if layout is not None and not isinstance(layout, str):
+            raise RefError("resource layout must be a string")
+        return cls(cast(ResourceKind, kind), host, project, raw_id, branch, layout)
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +165,38 @@ def parse_repo_ref(
         return ResourceRef(kind, parts.netloc, project, branch=branch)
     repo = resolve_repo(repo_arg, runner)
     return ResourceRef(kind, repo.host, repo.project, branch=branch)
+
+
+def glab_default_host(runner: SyncRunner = _default_runner) -> str:
+    """glab's default host, as `glab config get host` prints it (gitlab.com unless configured)."""
+    result = runner(["config", "get", "host"])
+    host = (result.stdout or b"").decode("utf-8", "replace").strip()
+    if result.returncode != 0 or not host:
+        raise RefError(f"glab has no default host: {stderr_message(result)}")
+    return urlsplit(host).netloc if "://" in host else host
+
+
+def parse_dashboard_ref(
+    arg: str | None, layout: str | None = None, runner: SyncRunner = _default_runner
+) -> ResourceRef:
+    """The host of `glab-watch my-mrs` and `glab-my-mrs`: a host name, any URL on the host (such as the dashboard's
+    `https://<host>/dashboard/merge_requests`), or nothing for the host of the cwd's repo (one request), else glab's
+    default host."""
+    arg = (arg or "").strip()
+    if arg.startswith(("http://", "https://")):
+        host = urlsplit(arg).netloc
+        if not host:
+            raise RefError(f"cannot read the host from {arg}")
+    elif arg:
+        if "/" in arg or " " in arg:
+            raise RefError(f"expected a GitLab host such as gitlab.example.com, or a URL, got {arg!r}")
+        host = arg
+    else:
+        try:
+            host = resolve_repo(None, runner).host
+        except RefError:
+            host = glab_default_host(runner)
+    return ResourceRef("my-mrs", host, "", layout=layout)
 
 
 @dataclass(frozen=True, slots=True)

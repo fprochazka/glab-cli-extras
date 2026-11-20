@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+Added:
+
+- `glab-my-mrs` prints your merge request dashboard (`https://<host>/dashboard/merge_requests`) as it is now: each list with its MRs, their reviewers' review states and head pipeline, as text or with `--json`. `--list returned_to_you,reviews_requested` and `--side author|reviewer` show only some lists, `--layout auto|action|role` picks the layout, and a Merged-tab list is read when `--list` names one. The lists and their rules are the dashboard's own, the Duo bot ignored as a reviewer on the author side. One GraphQL request per 50 open MRs per side.
+- `glab-watch my-mrs` watches the same dashboard and reports `list_changed` (an MR entered or left a list, with the side and a reason), `review_state_changed` (per reviewer), `mr_updated` (with the head pipeline's status among the `changes`), `mr_opened`, `mr_merged` and `mr_closed`. It reads the whole open set every `--interval`, `15m` by default and at least `1m`, because a review state changes without touching the MR. It takes the same `--list`, `--side` and `--layout` as `glab-my-mrs`; the list filter runs in the watcher, so all watchers of a host share one poller. Its `state.json` holds the selected lists in the shape `glab-my-mrs --json` prints.
+- The plugin's skills teach both, and its session check reports an install without `glab-my-mrs`.
+
 ## 0.10.0 (2026-11-18)
 
 Changed:

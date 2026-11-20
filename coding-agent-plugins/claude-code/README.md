@@ -5,7 +5,7 @@ Claude Code plugin for GitLab through the [glab CLI](https://gitlab.com/gitlab-o
 ## Requirements
 
 - `glab` installed, on `PATH`, and logged in to your GitLab host (`glab auth status`).
-- glab-cli-extras of the same minor version as the plugin, which provides `glab-watch`, `glab-mr-status`, `glab-pipeline`, `glab-discussion`, `glab-search-code` and the Bash guard:
+- glab-cli-extras of the same minor version as the plugin, which provides `glab-watch`, `glab-mr-status`, `glab-my-mrs`, `glab-pipeline`, `glab-discussion`, `glab-search-code` and the Bash guard:
 
   ```bash
   uv tool install glab-cli-extras
@@ -56,7 +56,7 @@ Each command runs `glab-mr-status` for the MR of the current branch, as `glab` f
 
 ## Permissions
 
-The skills pre-approve the read-only commands they run in their `allowed-tools`: `glab-mr-status`, `glab-discussion read`, `glab-pipeline inspect`, `glab-search-code`, and the read-only `glab` subcommands and `--help` pages. The `/glab:comments` command carries `glab-discussion` in full, because it replies to and resolves threads, and the `/glab:pipeline` command carries `glab-pipeline` in full. Everything else, `glab-watch` included, asks the first time. To allow the skills to load without a prompt, add `Skill(glab:glab)` and the other skills by their full `glab:` names to `permissions.allow` in your settings.
+The skills pre-approve the read-only commands they run in their `allowed-tools`: `glab-mr-status`, `glab-my-mrs`, `glab-discussion read`, `glab-pipeline inspect`, `glab-search-code`, and the read-only `glab` subcommands and `--help` pages. The `/glab:comments` command carries `glab-discussion` in full, because it replies to and resolves threads, and the `/glab:pipeline` command carries `glab-pipeline` in full. Everything else, `glab-watch` included, asks the first time. To allow the skills to load without a prompt, add `Skill(glab:glab)` and the other skills by their full `glab:` names to `permissions.allow` in your settings.
 
 ## License
 

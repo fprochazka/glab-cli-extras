@@ -17,11 +17,14 @@ from cli_watch_kit.client import Backend
 from cli_watch_kit.daemon.transport import DaemonMismatch
 from cli_watch_kit.sinks import StatusOutput
 
-from glab_cli_extras.events import WATCH_DEGRADED, WATCH_ENDED, WATCH_STARTED, Event, utc_now_iso
+from glab_cli_extras.dashboard.lists import ListFilter, ListFilterError
+from glab_cli_extras.dashboard.view import to_json
+from glab_cli_extras.events import LIFECYCLE_KINDS, WATCH_DEGRADED, WATCH_ENDED, WATCH_STARTED, Event, utc_now_iso
 from glab_cli_extras.gitlab.client import ApiError
 from glab_cli_extras.gitlab.refs import ResourceRef
 from glab_cli_extras.paths import base_dir
 from glab_cli_extras.pipeline.dump import write_dump
+from glab_cli_extras.resources.my_mrs import MyMrsSnapshot
 from glab_cli_extras.serde import from_jsonable
 from glab_cli_extras.store.job_logs import has_log, write_log, write_placeholder
 from glab_cli_extras.store.layout import THREADS_DIR, ensure_readme, pipeline_dir, resource_dir
@@ -70,9 +73,38 @@ class DaemonFetches:
         return dict(dump) if isinstance(dump, dict) else {}
 
 
+def _event_lists(event: Event) -> list[str]:
+    """The dashboard lists an event of a `my-mrs` watch names: the MR's lists now, and those it left or entered."""
+    data = event.data
+    current = data.get("lists")
+    ids = list(current.values()) if isinstance(current, dict) else []
+    if event.kind != "review_state_changed":
+        # A review_state_changed's from and to are review states, not lists.
+        ids += [data.get("from"), data.get("to"), data.get("merged_list")]
+    return [i for i in ids if isinstance(i, str)]
+
+
+def filter_my_mrs_events(events: list[Event], lists: ListFilter) -> list[Event]:
+    """The events of a `my-mrs` watch about an MR in a selected list, before or after the change. An MR that passes
+    brings every event of its batch along, such as the review_state_changed that moved it out of the list."""
+    passing = {e.data.get("reference") for e in events if any(lists.matches(i) for i in _event_lists(e))}
+    return [e for e in events if e.kind in LIFECYCLE_KINDS or e.data.get("reference") in passing]
+
+
 class ResourceWriter:
-    def __init__(self, base: Path, ref: ResourceRef, backend: Fetches, logs: LogsMode, status: StatusOutput) -> None:
+    def __init__(
+        self,
+        base: Path,
+        ref: ResourceRef,
+        backend: Fetches,
+        logs: LogsMode,
+        status: StatusOutput,
+        lists: ListFilter | None = None,
+    ) -> None:
         self.base = base
+        self.lists = lists or ListFilter()
+        """`my-mrs` only: the dashboard lists this watch reports."""
+        self._layout_checked = False
         self.ref = ref
         self.backend = backend
         self.logs = logs
@@ -96,6 +128,9 @@ class ResourceWriter:
 
     def snapshot(self, data: Any) -> None:
         """Write a new snapshot to `state.json`, and bring an MR's thread files up to date with it."""
+        if data is not None and self.ref.kind == "my-mrs":
+            self._dashboard(data)
+            return
         if data is None or self.ref.kind not in ("mr", "pipeline"):
             return
         try:
@@ -124,6 +159,31 @@ class ResourceWriter:
                 return
             self._mr = snap
             self._sync_threads(set())
+
+    def _dashboard(self, data: Any) -> None:
+        """`state.json` of a `my-mrs` watch: the selected lists, in the shape `glab-my-mrs --json` prints."""
+        try:
+            snap = from_jsonable(MyMrsSnapshot, data)
+        except ValueError as exc:
+            self._fail("state.json", exc)
+            return
+        try:
+            selected = self.lists.selected(snap.layout, include_merged=False)
+        except ListFilterError as exc:
+            if not self._layout_checked:
+                self.status.line(f"warning: {exc}; this watch reports nothing until the layout changes")
+            self._layout_checked = True
+            selected = ()
+        self._layout_checked = True
+        try:
+            with locked(self.dir, LOCK_TIMEOUT):
+                ensure_readme(self.dir, self.ref.kind)
+                state = load_state(self.dir, self.ref.key)
+                state["observed_at"] = utc_now_iso()
+                state["dashboard"] = to_json(snap.dashboard(), selected)
+                save_state(self.dir, state)
+        except (LockTimeout, OSError) as exc:
+            self._fail("state.json", exc)
 
     def inspect_command(self, project: str, pipeline_id: int) -> str:
         """The glab-pipeline command that downloads every log of a pipeline into the same dir."""
@@ -215,6 +275,8 @@ class ResourceWriter:
         """Write the files the events announce and point the events at them."""
         if self._pending_threads:
             self._sync_threads(set())
+        if self.ref.kind == "my-mrs" and self.lists.active:
+            events = filter_my_mrs_events(events, self.lists)
         attached = []
         for event in events:
             if event.kind == WATCH_STARTED:
@@ -242,6 +304,12 @@ class ResourceWriter:
         summary["dir"] = str(self.dir)
         if isinstance(summary.get("threads"), dict):
             summary["threads"] = {**summary["threads"], "dir": str(self.dir / THREADS_DIR)}
+        if self.ref.kind == "my-mrs":
+            summary["state"] = str(self.dir / "state.json")
+            if self.lists.active:
+                for key in ("lists", "merged_2_weeks"):
+                    if isinstance(summary.get(key), dict):
+                        summary[key] = {k: v for k, v in summary[key].items() if self.lists.matches(k)}
         data["summary"] = summary
         return replace(event, data=data)
 
