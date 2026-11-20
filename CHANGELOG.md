@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.1 (2026-11-20)
+
+Fixed:
+
+- `glab-watch` no longer hangs when it is stopped with two SIGTERMs in a row, as GNU `timeout` sends them: it runs on [cli-watch-kit](https://github.com/fprochazka/cli-watch-kit) 0.2.1, whose signal handler cannot deadlock on the second signal. Nothing else changes.
+
 ## 0.11.0 (2026-11-20)
 
 Added:
