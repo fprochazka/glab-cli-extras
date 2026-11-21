@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.2 (2026-11-21)
+
+Changed:
+
+- glab-cli-extras accepts [cc-blackbox](https://github.com/fprochazka/cc-blackbox) 0.13 and runs on [cli-watch-kit](https://github.com/fprochazka/cli-watch-kit) 0.2.2, which accepts it too. Neither changes what the commands do.
+
 ## 0.11.1 (2026-11-20)
 
 Fixed:
