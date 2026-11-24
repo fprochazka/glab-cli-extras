@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.3 (2026-11-24)
+
+Changed:
+
+- `glab-watch` started from a Claude Code session in bypassPermissions mode can prove it is that session's child: it runs on [cc-blackbox](https://github.com/fprochazka/cc-blackbox) 0.14.1 and [cli-watch-kit](https://github.com/fprochazka/cli-watch-kit) 0.2.3, which send Claude Code's documented child-token auth line before each message. That counts on macOS and in containers where Claude Code runs as PID 1; on Linux Claude Code already verifies the watcher from the process tree. The README and the glab-watch skill explain why a bypass session holds the events and why `"crossSessionInbound": "accept"` in user settings is the risky fix.
+
 ## 0.11.2 (2026-11-21)
 
 Changed:
