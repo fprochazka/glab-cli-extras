@@ -123,6 +123,6 @@ Each resource has one dir under the session scratchpad, mirroring its GitLab URL
 ## Limits
 
 - No ticket states: glab-watch reads GitLab only.
-- A session in bypass-permissions mode holds the messages until the user lets them in. The changelog still has every event.
+- A session in bypass-permissions mode holds the messages of a watcher it cannot verify as its own child until the user lets them in; the changelog still has every event. Start glab-watch from this session's own Bash tool, as above, so Claude Code can verify it. If the user's messages are still held, tell them rather than suggesting `"crossSessionInbound": "accept"` in their settings: that lets every local sender, other sessions included, drive a session that runs commands without asking. One run with `claude --settings '{"crossSessionInbound":"accept"}'`, or auto mode, is the narrower choice.
 - `mr_updated` of an `mrs` watch is best effort: GitLab does not move `updated_at` for a second change within a minute.
 - A `my-mrs` watch lags by its `--interval`, 15 minutes by default, on purpose: it rereads all your open MRs each time. A reviewer starting a draft review is seen only at the next poll. When one MR needs a reaction within seconds, watch it with `glab-watch mr`.

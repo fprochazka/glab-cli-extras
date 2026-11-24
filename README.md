@@ -239,9 +239,17 @@ The session sees each batch as a message from `glab-watch mr group/project!123`:
 - **Files.** Under a Claude Code session every file goes to `<session scratchpad>/glab-cli-extras/`, in both stream modes.
 - **Lifetime.** A `claude-message` watcher exits when its session is gone: the socket refuses the message, or the session's record is no longer live. Watchers never outlive their session.
 - **Subagents.** A watcher started from a subagent's Bash messages the main session. Claude Code has no route to a subagent.
-- **Best effort.** The session may drop a message under its own rate limit, or hold it until its user approves it, which a session in bypass-permissions mode does. The changelog always has every event.
+- **Best effort.** The session may drop a message under its own rate limit, or hold it until its user approves it, which a session in bypass-permissions mode does for a sender it cannot verify, see [bypassPermissions sessions](#bypasspermissions-sessions). The changelog always has every event.
 
 When the session's messaging does not match what the cc-blackbox SDK speaks, for example after a Claude Code update, `auto` uses stdout, and the header says why on a `glab-watch: stream fallback:` line. If that happens while the watcher runs, it prints the same line and sends the rest of the events to stdout.
+
+### bypassPermissions sessions
+
+Claude Code holds a message for its user's approval when the receiving session runs in `bypassPermissions` mode and cannot verify the sender. The events then show up as "Held peer message … The sender did not attest its permission mode" instead of reaching the model. Sessions in other modes, auto included, deliver them.
+
+Start `glab-watch` from the receiving session's own Bash tool. Claude Code delivers messages from its own child processes even in bypass mode: on Linux it checks the process tree, and on macOS and in containers where `claude` runs as PID 1 the watcher also proves it with the session's `CLAUDE_CODE_MESSAGING_TOKEN`, which glab-watch sends since 0.11.3. A watcher started from another terminal or another session stays held.
+
+If the events are still held, avoid setting `"crossSessionInbound": "accept"` in your user settings. It lets every bypass session take messages from any local sender, other Claude Code sessions included, so a session that read untrusted input, such as an MR comment, could drive one that runs commands without asking. Limit it to one run with `claude --settings '{"crossSessionInbound":"accept"}'`, or run the watching session in auto mode. See [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging) and [`crossSessionInbound`](https://code.claude.com/docs/en/settings-reference#crosssessioninbound).
 
 ### The daemon
 
